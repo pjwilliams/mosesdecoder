@@ -29,6 +29,7 @@ my $otherExtractArgs= "";
 my $weights = "";
 my $baselineExtract;
 my $glueFile;
+my $targetIndicesFile;
 
 for (my $i = 8; $i < $#ARGV + 1; ++$i)
 {
@@ -43,6 +44,10 @@ for (my $i = 8; $i < $#ARGV + 1; ++$i)
   }
   if ($ARGV[$i] eq '--GlueGrammar') {
     $glueFile = $ARGV[++$i];
+    next;
+  }
+  if ($ARGV[$i] eq '--WriteTargetIndices') {
+    $targetIndicesFile = $ARGV[++$i];
     next;
   }
 
@@ -131,7 +136,13 @@ for (my $i = 0; $i < $numParallel; ++$i)
     }
     print "glueArg=$glueArg \n";
 
-    my $cmd = "$extractCmd $TMPDIR/target.$numStr $TMPDIR/source.$numStr $TMPDIR/align.$numStr $TMPDIR/extract.$numStr $glueArg $otherExtractArgs $weightsCmd --SentenceOffset ".($i*$linesPerSplit)." 2>> /dev/stderr \n";
+    my $targetIndicesArg = "";
+    if (defined($targetIndicesFile)) {
+      $targetIndicesArg = "--WriteTargetIndices $TMPDIR/target-indices.$numStr";
+    }
+    print "targetIndicesArg=$targetIndicesArg \n";
+
+    my $cmd = "$extractCmd $TMPDIR/target.$numStr $TMPDIR/source.$numStr $TMPDIR/align.$numStr $TMPDIR/extract.$numStr $glueArg $targetIndicesArg $otherExtractArgs $weightsCmd --SentenceOffset ".($i*$linesPerSplit)." 2>> /dev/stderr \n";
     print STDERR $cmd;
     `$cmd`;
 
@@ -154,6 +165,7 @@ my $catInvCmd = $catCmd;
 my $catOCmd = $catCmd;
 my $catContextCmd = $catCmd;
 my $catContextInvCmd = $catCmd;
+my $catTargetIndicesCmd = "cat ";
 
 for (my $i = 0; $i < $numParallel; ++$i)
 {
@@ -163,6 +175,7 @@ for (my $i = 0; $i < $numParallel; ++$i)
 		$catOCmd .= "$TMPDIR/extract.$numStr.o.gz ";
 		$catContextCmd .= "$TMPDIR/extract.$numStr.context ";
 		$catContextInvCmd .= "$TMPDIR/extract.$numStr.context.inv ";
+    $catTargetIndicesCmd .= "$TMPDIR/target-indices.$numStr ";
 }
 if (defined($baselineExtract)) {
 		my $sorted = -e "$baselineExtract.sorted.gz" ? ".sorted" : "";
@@ -176,6 +189,9 @@ $catInvCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | gzip -c > $extr
 $catOCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | gzip -c > $extract.o.sorted.gz 2>> /dev/stderr \n";
 $catContextCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | uniq | gzip -c > $extract.context.sorted.gz 2>> /dev/stderr \n";
 $catContextInvCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | uniq | gzip -c > $extract.context.inv.sorted.gz 2>> /dev/stderr \n";
+if (defined($targetIndicesFile)) {
+  $catTargetIndicesCmd .= " > $targetIndicesFile 2>> /dev/stderr \n"
+}
 
 
 @children = ();
@@ -205,6 +221,11 @@ if (-e "$TMPDIR/extract.$numStr.o.gz")
 {
 	$pid = RunFork($catOCmd);
 	push(@children, $pid);
+}
+
+if (defined($targetIndicesFile)) {
+  $pid = RunFork($catTargetIndicesCmd);
+  push(@children, $pid);
 }
 
 # wait for all sorting to finish

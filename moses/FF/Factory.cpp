@@ -10,6 +10,7 @@
 #include "moses/TranslationModel/PhraseDictionaryDynSuffixArray.h"
 #include "moses/TranslationModel/PhraseDictionaryScope3.h"
 #include "moses/TranslationModel/PhraseDictionaryTransliteration.h"
+#include "moses/TranslationModel/ConstraintModel/Model.h"
 #include "moses/TranslationModel/RuleTable/PhraseDictionaryFuzzyMatch.h"
 
 #include "moses/FF/LexicalReordering/LexicalReordering.h"
@@ -194,6 +195,7 @@ FeatureRegistry::FeatureRegistry()
   MOSES_FNAME(SourceGHKMTreeInputMatchFeature);
   MOSES_FNAME(TreeStructureFeature);
   MOSES_FNAME(SoftMatchingFeature);
+  MOSES_FNAME2("ConstraintModel", CM::ConstraintModel);
   MOSES_FNAME(HyperParameterAsWeight);
   MOSES_FNAME(SetSourcePhrase);
   MOSES_FNAME(CountNonTerms);

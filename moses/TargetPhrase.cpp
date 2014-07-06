@@ -21,6 +21,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include <algorithm>
 #include <stdlib.h>
+#include <taco/constraint_evaluator.h>
+#include <taco/option_table.h>
 #include "util/exception.hh"
 #include "util/tokenize_piece.hh"
 
@@ -38,6 +40,29 @@ using namespace std;
 
 namespace Moses
 {
+
+TargetPhrase::GuardedPartialFSVec::GuardedPartialFSVec()
+  : m_vec(NULL)
+{
+}
+
+TargetPhrase::GuardedPartialFSVec::GuardedPartialFSVec(
+    const GuardedPartialFSVec &)
+  : m_vec(NULL)
+{
+}
+
+TargetPhrase::GuardedPartialFSVec & TargetPhrase::GuardedPartialFSVec::operator=(
+    const TargetPhrase::GuardedPartialFSVec &other)
+{
+  boost::upgrade_lock<boost::shared_mutex> lock(m_mutex);
+  if (m_vec) {
+    boost::upgrade_to_unique_lock<boost::shared_mutex> unique_lock(lock);
+    delete m_vec;
+    m_vec = NULL;
+  }
+}
+
 TargetPhrase::TargetPhrase( std::string out_string)
   :Phrase(0)
   , m_fullScore(0.0)
@@ -263,6 +288,77 @@ void TargetPhrase::SetRuleSource(const Phrase &ruleSource) const
 {
   if (m_ruleSource == NULL) {
     m_ruleSource = new Phrase(ruleSource);
+  }
+}
+
+void TargetPhrase::GeneratePartialInterpretations(
+    const CM::ConstraintModel &constraintModel,
+    PartialFSVec &partialFSVec) const
+{
+  using namespace taco;
+
+  typedef std::vector<const CM::CSParamPair *> CSParamPairVec;
+
+  // Should only be called once.
+  assert(partialFSVec.empty());
+
+  const CSParamPairVec *constraintSets = GetConstraintSets();
+  if (!constraintSets || constraintSets->empty()) {
+    return;
+  }
+
+  partialFSVec.resize(constraintSets->size());
+
+  ConstraintEvaluator evaluator;
+
+  for (size_t i = 0; i < constraintSets->size(); ++i) {
+    const CM::CSParamPair *pair = (*constraintSets)[i];
+    const ConstraintSet &constraintSet = pair->first;
+    const CM::SubmodelParams &params = pair->second;
+    std::set<int> indices;
+    constraintSet.GetIndices(indices);
+    OptionTable optionTable;
+    const Lexicon<std::size_t> &lexicon =
+        constraintModel.GetLexicons()[params.csTypeIndex];
+    BuildOptionTable(lexicon, indices, optionTable);
+    evaluator.Eval(optionTable, constraintSet, partialFSVec[i]);
+  }
+}
+
+void TargetPhrase::BuildOptionTable(const taco::Lexicon<std::size_t> &lexicon,
+                                    const std::set<int> &indices,
+                                    taco::OptionTable &optionTable) const
+{
+  using namespace taco;
+
+  for (std::set<int>::const_iterator p = indices.begin();
+       p != indices.end(); ++p) {
+    if (*p == 0) { // LHS
+      optionTable.AddWildcardColumn(0);
+      continue;
+    }
+    int rhsIndex = *p - 1;
+    assert(rhsIndex >= 0);
+    assert(rhsIndex < GetSize());
+    const Word &word = GetWord(rhsIndex);
+    if (word.IsNonTerminal()) {
+      optionTable.AddWildcardColumn(*p);
+      continue;
+    }
+    const Factor *f = word.GetFactor(0);
+    assert(f);
+    size_t wordId = f->GetId();
+    const Lexicon<std::size_t>::MappedType *fsVec = lexicon.Lookup(wordId);
+    if (fsVec) {
+      assert(!fsVec->empty());
+      optionTable.AddColumn(*p, fsVec->begin(), fsVec->end());
+    } else {
+      // This should only happen for unknown source words that are untranslated.
+      // The lexicon should contain at least one entry for every word that
+      // occurs as a terminal in the main grammar.
+      // TODO Emit a warning every time this happens?
+      optionTable.AddWildcardColumn(*p);
+    }
   }
 }
 

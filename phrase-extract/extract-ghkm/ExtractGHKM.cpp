@@ -32,6 +32,7 @@
 #include "Span.h"
 #include "SyntaxTree.h"
 #include "tables-core.h"
+#include "TargetIndicesWriter.h"
 #include "XmlException.h"
 #include "XmlTree.h"
 #include "XmlTreeParser.h"
@@ -67,6 +68,7 @@ int ExtractGHKM::Main(int argc, char *argv[])
   OutputFileStream fwdExtractStream;
   OutputFileStream invExtractStream;
   std::ofstream glueGrammarStream;
+  std::ofstream targetIndicesStream;
   std::ofstream targetUnknownWordStream;
   std::ofstream sourceUnknownWordStream;
   std::ofstream sourceLabelSetStream;
@@ -81,6 +83,9 @@ int ExtractGHKM::Main(int argc, char *argv[])
   OpenOutputFileOrDie(invFileName, invExtractStream);
   if (!options.glueGrammarFile.empty()) {
     OpenOutputFileOrDie(options.glueGrammarFile, glueGrammarStream);
+  }
+  if (!options.targetIndicesFile.empty()) {
+    OpenOutputFileOrDie(options.targetIndicesFile, targetIndicesStream);
   }
   if (!options.targetUnknownWordFile.empty()) {
     OpenOutputFileOrDie(options.targetUnknownWordFile, targetUnknownWordStream);
@@ -121,6 +126,10 @@ int ExtractGHKM::Main(int argc, char *argv[])
   XmlTreeParser xmlTreeParser(targetLabelSet, targetTopLabelSet);
 //  XmlTreeParser sourceXmlTreeParser(sourceLabelSet, sourceTopLabelSet);
   ScfgRuleWriter writer(fwdExtractStream, invExtractStream, options);
+  std::auto_ptr<TargetIndicesWriter> targetIndicesWriter;
+  if (!options.targetIndicesFile.empty()) {
+    targetIndicesWriter.reset(new TargetIndicesWriter(targetIndicesStream));
+  }
   size_t lineNum = options.sentenceOffset;
   while (true) {
     std::getline(targetStream, targetLine);
@@ -227,6 +236,11 @@ int ExtractGHKM::Main(int argc, char *argv[])
     // alignment.
     AlignmentGraph graph(targetParseTree.get(), sourceTokens, alignment);
 
+    // Optionally, assign all target nodes an index.
+    if (targetIndicesWriter.get()) {
+      targetIndicesWriter->IndexGraph(graph, lineNum);
+    }
+
     // Extract minimal rules, adding each rule to its root node's rule set.
     graph.ExtractMinimalRules(options);
 
@@ -242,11 +256,12 @@ int ExtractGHKM::Main(int argc, char *argv[])
       const std::vector<const Subgraph *> &rules = (*p)->GetRules();
       for (std::vector<const Subgraph *>::const_iterator q = rules.begin();
            q != rules.end(); ++q) {
+        const Subgraph &fragment = **q;
         ScfgRule *r = 0;
         if (options.sourceLabels) {
-          r = new ScfgRule(**q, &sourceSyntaxTree);
+          r = new ScfgRule(fragment, &sourceSyntaxTree);
         } else {
-          r = new ScfgRule(**q);
+          r = new ScfgRule(fragment);
         }
         // TODO Can scope pruning be done earlier?
         if (r->Scope() <= options.maxScope) {
@@ -254,6 +269,9 @@ int ExtractGHKM::Main(int argc, char *argv[])
             writer.Write(*r);
           } else {
             writer.Write(*r,**q);
+          }
+          if (targetIndicesWriter.get()) {
+            targetIndicesWriter->Write(fragment);
           }
         }
         delete r;
@@ -425,6 +443,9 @@ void ExtractGHKM::ProcessOptions(int argc, char *argv[],
    "write uniform weights to unknown word label file")
   ("UnpairedExtractFormat",
    "do not pair non-terminals in extract files")
+  ("WriteTargetIndices",
+   po::value(&options.targetIndicesFile),
+   "write target indices to named file")
   ;
 
   // Declare the command line options that are hidden from the user

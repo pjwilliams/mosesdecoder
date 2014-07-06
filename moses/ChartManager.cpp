@@ -49,6 +49,10 @@ ChartManager::ChartManager(InputType const& source)
   ,m_parser(source, m_hypoStackColl)
   ,m_translationOptionList(StaticData::Instance().GetRuleLimit(), source)
 {
+  const CM::ConstraintModel *cm = StaticData::Instance().GetConstraintModel();
+  if (cm) {
+    m_constraintEvaluator.reset(new CM::ConstraintEvaluator(*cm));
+  }
 }
 
 ChartManager::~ChartManager()

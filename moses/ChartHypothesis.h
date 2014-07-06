@@ -141,6 +141,7 @@ public:
   int RecombineCompare(const ChartHypothesis &compare) const;
 
   void Evaluate();
+  bool EvaluateHC(const CM::ConstraintModel &);
 
   void AddArc(ChartHypothesis *loserHypo);
   void CleanupArcList();

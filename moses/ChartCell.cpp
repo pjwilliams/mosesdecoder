@@ -88,6 +88,9 @@ void ChartCell::ProcessSentence(const ChartTranslationOptionList &transOptList
 {
   const StaticData &staticData = StaticData::Instance();
 
+  const CM::ConstraintModel *cm = staticData.GetConstraintModel();
+  bool hardConstraint = cm ? cm->HardConstraint() : false;
+
   // priority queue for applicable rules with selected hypotheses
   RuleCubeQueue queue(m_manager);
 
@@ -95,13 +98,22 @@ void ChartCell::ProcessSentence(const ChartTranslationOptionList &transOptList
   for (size_t i = 0; i < transOptList.GetSize(); ++i) {
     const ChartTranslationOptions &transOpt = transOptList.Get(i);
     RuleCube *ruleCube = new RuleCube(transOpt, allChartCells, m_manager);
-    queue.Add(ruleCube);
+    if (ruleCube->IsEmpty()) {
+      // will be empty if all items fail constraints.
+      delete ruleCube;
+    } else {
+      queue.Add(ruleCube);
+    }
   }
 
   // pluck things out of queue and add to hypo collection
   const size_t popLimit = staticData.GetCubePruningPopLimit();
   for (size_t numPops = 0; numPops < popLimit && !queue.IsEmpty(); ++numPops) {
     ChartHypothesis *hypo = queue.Pop();
+    if (hardConstraint && !hypo->EvaluateHC(*cm)) {
+      delete hypo;
+      continue;
+    }
     AddHypothesis(hypo);
   }
 }

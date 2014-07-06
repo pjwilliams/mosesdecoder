@@ -215,6 +215,17 @@ void ChartHypothesis::Evaluate()
   m_totalScore	= m_scoreBreakdown.GetWeightedScore();
 }
 
+bool ChartHypothesis::EvaluateHC(const CM::ConstraintModel &cm)
+{
+  // Assumes Evaluate() has already been called.
+  int i = cm.GetFeatureId();
+  const CM::ConstraintEvaluator &evaluator = m_manager.GetConstraintEvaluator();
+  bool failure;
+  m_ffStates[i] = cm.EvaluateInternal(*this, failure, &m_scoreBreakdown);
+  m_totalScore = m_scoreBreakdown.GetWeightedScore();
+  return !failure;
+}
+
 void ChartHypothesis::AddArc(ChartHypothesis *loserHypo)
 {
   if (!m_arcList) {

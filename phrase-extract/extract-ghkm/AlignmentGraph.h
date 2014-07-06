@@ -49,6 +49,9 @@ public:
   Node *GetRoot() {
     return m_root;
   }
+  const Node *GetRoot() const {
+    return m_root;
+  }
   const std::vector<Node *> &GetTargetNodes() {
     return m_targetNodes;
   }

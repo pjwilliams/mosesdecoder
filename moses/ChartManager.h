@@ -30,6 +30,7 @@
 #include "SentenceStats.h"
 #include "ChartTranslationOptionList.h"
 #include "ChartParser.h"
+#include "moses/TranslationModel/ConstraintModel/ConstraintEvaluator.h"
 #include "ChartKBestExtractor.h"
 
 #include <boost/shared_ptr.hpp>
@@ -49,6 +50,7 @@ private:
   std::auto_ptr<SentenceStats> m_sentenceStats;
   clock_t m_start; /**< starting time, used for logging */
   unsigned m_hypothesisId; /* For handing out hypothesis ids to ChartHypothesis */
+  boost::shared_ptr<CM::ConstraintEvaluator> m_constraintEvaluator;
 
   ChartParser m_parser;
 
@@ -78,6 +80,10 @@ public:
   //DIMw
   const ChartCellCollection& GetChartCellCollection() const {
     return m_hypoStackColl;
+  }
+
+  const CM::ConstraintEvaluator &GetConstraintEvaluator() const {
+    return *m_constraintEvaluator;
   }
 
   /***

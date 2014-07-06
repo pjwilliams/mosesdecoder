@@ -69,5 +69,17 @@ void Node::GetTargetWords(std::vector<std::string> &targetWords) const
   }
 }
 
+void Node::GetTargetNodes(std::vector<const Node *> &targetNodes) const
+{
+  if (m_type == TARGET) {
+    targetNodes.push_back(this);
+  } else {
+    for (std::vector<Node *>::const_iterator p(m_children.begin());
+         p != m_children.end(); ++p) {
+      (*p)->GetTargetNodes(targetNodes);
+    }
+  }
+}
+
 }  // namespace GHKM
 }  // namespace Moses

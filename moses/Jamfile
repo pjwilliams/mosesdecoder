@@ -62,6 +62,7 @@ lib moses :
   TranslationModel/RuleTable/*.cpp
   TranslationModel/Scope3Parser/*.cpp
   TranslationModel/CYKPlusParser/*.cpp
+  TranslationModel/ConstraintModel/*.cpp
   FF/*.cpp
   FF/OSM-Feature/*.cpp
   FF/LexicalReordering/*.cpp

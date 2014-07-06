@@ -107,6 +107,8 @@ public:
 
   std::vector<std::string> GetTargetWords() const;
 
+  void GetTargetNodes(std::vector<const Node *> &) const;
+
   // Gets the path from this node's parent to the root.  This node is
   // required to be part of the original parse tree (i.e. not a source word,
   // which can have multiple parents).

@@ -68,6 +68,7 @@ public:
   bool sourceLabels;
   std::string sourceLabelSetFile;
   int sentenceOffset;
+  std::string targetIndicesFile;
   bool unpairedExtractFormat;
   std::string targetUnknownWordFile;
   std::string sourceUnknownWordFile;

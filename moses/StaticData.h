@@ -51,6 +51,10 @@ class InputType;
 class DecodeGraph;
 class DecodeStep;
 
+namespace CM {
+class ConstraintModel;
+}
+
 typedef std::pair<std::string, float> UnknownLHSEntry;
 typedef std::vector<UnknownLHSEntry>  UnknownLHSList;
 
@@ -186,6 +190,8 @@ protected:
   SourceLabelOverlap m_sourceLabelOverlap;
   UnknownLHSList m_unknownLHS;
   WordAlignmentSort m_wordAlignmentSort;
+
+  const CM::ConstraintModel *m_constraintModel;
 
   int m_threadCount;
   long m_startTranslationId;
@@ -631,6 +637,14 @@ public:
   }
   WordAlignmentSort GetWordAlignmentSort() const {
     return m_wordAlignmentSort;
+  }
+
+  const CM::ConstraintModel *GetConstraintModel() const {
+    return m_constraintModel;
+  }
+
+  void SetConstraintModel(const CM::ConstraintModel *p) {
+    m_constraintModel = p;
   }
 
   bool NBestIncludesSegmentation() const {

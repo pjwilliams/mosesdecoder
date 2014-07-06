@@ -42,6 +42,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include "DecodeGraph.h"
 #include "TranslationModel/PhraseDictionary.h"
 #include "TranslationModel/PhraseDictionaryTreeAdaptor.h"
+#include "TranslationModel/ConstraintModel/Model.h"
 
 #ifdef WITH_THREADS
 #include <boost/thread.hpp>
@@ -65,6 +66,7 @@ StaticData::StaticData()
   ,m_factorDelimiter("|") // default delimiter between factors
   ,m_lmEnableOOVFeature(false)
   ,m_isAlwaysCreateDirectTranslationOption(false)
+  ,m_constraintModel(NULL)
   ,m_currentWeightSetting("default")
   ,m_treeStructure(NULL)
 {
@@ -531,6 +533,27 @@ bool StaticData::LoadData(Parameter *parameter)
     	feature = newName;
     	string newLine = Join(" ", toks);
     	m_registry.Construct(newName, newLine);
+    }
+    // NASTY CONSTRAINT MODEL HACKS
+    if (feature == "ConstraintModel") {
+      // Set m_constraintModel pointer.
+      FeatureFunction &ff = FeatureFunction::FindFeatureFunction("ConstraintModel0");
+      CM::ConstraintModel &cm = dynamic_cast<CM::ConstraintModel&>(ff);
+      SetConstraintModel(&cm);
+      // Find constraint model in StatefulFeatureFunction vec and record index.
+      const std::vector<const StatefulFeatureFunction*>& ffs =
+          StatefulFeatureFunction::GetStatefulFeatureFunctions();
+      for (unsigned int i = 0; i < ffs.size(); ++i) {
+        if (IsFeatureFunctionIgnored(*ffs[i])) {
+          continue;
+        }
+        const CM::ConstraintModel *p =
+            dynamic_cast<const CM::ConstraintModel*>(ffs[i]);
+        if (p) {
+          CM::ConstraintModel *cm = const_cast<CM::ConstraintModel*>(p);
+          cm->SetFeatureId(i);
+        }
+      }
     }
   }
 

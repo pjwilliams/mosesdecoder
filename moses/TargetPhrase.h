@@ -32,6 +32,17 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include "util/string_piece.hh"
 
 #include <boost/shared_ptr.hpp>
+#include <boost/bind.hpp>
+#include <boost/ref.hpp>
+#include <boost/thread/locks.hpp>
+#include <boost/thread/shared_mutex.hpp>
+
+#include "moses/TranslationModel/ConstraintModel/CSParamPair.h"
+#include "moses/TranslationModel/ConstraintModel/Model.h"
+
+#include <taco/constraint_set_set.h>
+#include <taco/feature_selection_rule.h>
+#include <taco/interpretation.h>
 
 #ifdef HAVE_PROTOBUF
 #include "rule.pb.h"
@@ -50,6 +61,20 @@ private:
   friend std::ostream& operator<<(std::ostream&, const TargetPhrase&);
   friend void swap(TargetPhrase &first, TargetPhrase &second);
 
+  typedef std::vector<std::vector<taco::Interpretation> > PartialFSVec;
+
+  struct GuardedPartialFSVec {
+    GuardedPartialFSVec();
+    GuardedPartialFSVec(const GuardedPartialFSVec &);
+    GuardedPartialFSVec &operator=(const GuardedPartialFSVec &);
+    // Reader-writer mutex to protect m_vec.  Since m_vec is only written once
+    // (on first use), call_once would be a better choice than shared_mutex
+    // here, but I couldn't get boost::call_once to work (due to a compilation
+    // error involving BOOST_ONCE_INIT) so am resorting to this.
+    boost::shared_mutex m_mutex;
+    PartialFSVec *m_vec;
+  };
+
   float m_fullScore, m_futureScore;
   ScoreComponentCollection m_scoreBreakdown;
 
@@ -59,6 +84,10 @@ private:
 
   typedef std::map<std::string, boost::shared_ptr<PhraseProperty> > Properties;
   Properties m_properties;
+
+  boost::shared_ptr<const std::vector<const CM::CSParamPair *> > m_constraintSets;
+  boost::shared_ptr<const taco::FeatureSelectionRule> m_featureSelectionRule;
+  mutable GuardedPartialFSVec m_partialFSVec;
 
 public:
   TargetPhrase();
@@ -130,6 +159,39 @@ public:
 
   const Phrase *GetRuleSource() const {
     return m_ruleSource;
+  }
+
+  void SetConstraintSets(boost::shared_ptr<const std::vector<const CM::CSParamPair *> > p) {
+    m_constraintSets = p; }
+
+  const std::vector<const CM::CSParamPair *> *GetConstraintSets() const {
+    return m_constraintSets.get();
+  }
+
+  void SetFeatureSelectionRule(
+      boost::shared_ptr<const taco::FeatureSelectionRule> p) {
+    m_featureSelectionRule = p;
+  }
+
+  std::vector<std::vector<taco::Interpretation> > &GetPartialInterpretations(
+      const CM::ConstraintModel &constraintModel) const {
+    boost::upgrade_lock<boost::shared_mutex> lk(m_partialFSVec.m_mutex);
+    if (!m_partialFSVec.m_vec) {
+      boost::upgrade_to_unique_lock<boost::shared_mutex> unique_lock(lk);
+      m_partialFSVec.m_vec = new PartialFSVec();
+      GeneratePartialInterpretations(constraintModel, *m_partialFSVec.m_vec);
+    }
+    return *m_partialFSVec.m_vec;
+  }
+
+  void BuildOptionTable(const taco::Lexicon<std::size_t> &, const std::set<int> &,
+                        taco::OptionTable &) const;
+
+  void GeneratePartialInterpretations(const CM::ConstraintModel &,
+                                      PartialFSVec &) const;
+
+  const taco::FeatureSelectionRule *GetFeatureSelectionRule() const {
+    return m_featureSelectionRule.get();
   }
 
   // To be set by the FF that needs it, by default the rule source = NULL

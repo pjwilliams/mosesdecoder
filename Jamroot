@@ -118,6 +118,14 @@ if [ option.get "with-cmph" ] {
   requirements += <define>HAVE_CMPH ;
 }
 
+with-taco = [ option.get "with-taco" ] ;
+if $(with-taco) {
+  lib Taco : : <name>taco <search>$(with-taco)/lib ;
+  requirements += <include>$(with-taco)/include ;
+  requirements += <define>WITH_TACO ;
+  requirements += <library>Taco ;
+}
+
 if [ option.get "with-probing-pt" : : "yes" ]
 {
   external-lib boost_serialization ;

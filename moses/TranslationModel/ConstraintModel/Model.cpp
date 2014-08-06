@@ -206,6 +206,7 @@ void ConstraintModel::LoadLexicon(int i, std::istream &input)
       size_t wordId = f->GetId();
       boost::shared_ptr<FeatureStructure> fs = fsParser.Parse(entry.fs);
       lexicon.Insert(wordId, fs);
+      ++lineNum;
     }
   } catch (const taco::Exception &e) {
     UTIL_THROW2("line " << lineNum  << ": " << e.msg());

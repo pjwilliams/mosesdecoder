@@ -60,11 +60,15 @@ void ConstraintModel::Load()
 
   // Load lexicon.
   for (std::size_t i = 0; i < m_parameters.m_lexiconFiles.size(); ++i) {
-    PrintUserTime(std::string("Start loading lexicon ") +
-                    m_parameters.m_lexiconFiles[i]);
+    const std::string &path = m_parameters.m_lexiconFiles[i];
+    PrintUserTime(std::string("Start loading lexicon ") + path);
     // TODO Check for errors
-    std::ifstream input(m_parameters.m_lexiconFiles[i].c_str());
-    LoadLexicon(i, input);
+    std::ifstream input(path.c_str());
+    try {
+      LoadLexicon(i, input);
+    } catch (const util::Exception &e) {
+      UTIL_THROW2("failed to load lexicon: `" << path << "': " << e.what());
+    }
     PrintUserTime("Finished loading lexicon");
   }
 
@@ -191,14 +195,20 @@ void ConstraintModel::LoadLexicon(int i, std::istream &input)
 
   FeatureStructureParser fsParser(m_featureSet, m_valueSet);
 
-  LexiconParser end;
-  for (LexiconParser parser(input); parser != end; ++parser) {
-    const LexiconParser::Entry &entry = *parser;
-    const Factor *f = factorCollection.AddFactor(Output, 0, entry.word);
-    assert(f);
-    size_t wordId = f->GetId();
-    boost::shared_ptr<FeatureStructure> fs = fsParser.Parse(entry.fs);
-    lexicon.Insert(wordId, fs);
+  std::size_t lineNum = 1;
+
+  try {
+    LexiconParser end;
+    for (LexiconParser parser(input); parser != end; ++parser) {
+      const LexiconParser::Entry &entry = *parser;
+      const Factor *f = factorCollection.AddFactor(Output, 0, entry.word);
+      assert(f);
+      size_t wordId = f->GetId();
+      boost::shared_ptr<FeatureStructure> fs = fsParser.Parse(entry.fs);
+      lexicon.Insert(wordId, fs);
+    }
+  } catch (const taco::Exception &e) {
+    UTIL_THROW2("line " << lineNum  << ": " << e.msg());
   }
 }
 

@@ -8,6 +8,8 @@
 #include "moses/PP/SourceLabelsPhraseProperty.h"
 #include "moses/PP/TreeStructurePhraseProperty.h"
 #include "moses/PP/SpanLengthPhraseProperty.h"
+#include "moses/PP/NonTermContextProperty.h"
+#include "moses/PP/OrientationPhraseProperty.h"
 
 namespace Moses
 {
@@ -57,6 +59,8 @@ PhrasePropertyFactory::PhrasePropertyFactory()
   MOSES_PNAME2("SourceLabels", SourceLabelsPhraseProperty);
   MOSES_PNAME2("Tree",TreeStructurePhraseProperty);
   MOSES_PNAME2("SpanLength", SpanLengthPhraseProperty);
+  MOSES_PNAME2("NonTermContext", NonTermContextProperty);
+  MOSES_PNAME2("Orientation", OrientationPhraseProperty);
 }
 
 PhrasePropertyFactory::~PhrasePropertyFactory()
@@ -83,13 +87,13 @@ boost::shared_ptr<PhraseProperty> PhrasePropertyFactory::ProduceProperty(const s
 
 void PhrasePropertyFactory::PrintPP() const
 {
-	std::cerr << "Registered phrase properties:" << std::endl;
-	Registry::const_iterator iter;
-	for (iter = m_registry.begin(); iter != m_registry.end(); ++iter) {
-		const std::string &ppName = iter->first;
-		std::cerr << ppName << " ";
-	}
-	std::cerr << std::endl;
+  std::cerr << "Registered phrase properties:" << std::endl;
+  Registry::const_iterator iter;
+  for (iter = m_registry.begin(); iter != m_registry.end(); ++iter) {
+    const std::string &ppName = iter->first;
+    std::cerr << ppName << " ";
+  }
+  std::cerr << std::endl;
 }
 
 } // namespace Moses

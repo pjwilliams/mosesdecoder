@@ -1,4 +1,5 @@
-#!/usr/bin/perl -w
+#!/usr/bin/env perl
+use warnings;
 
 # Sample Tokenizer
 ### Version 1.1
@@ -232,15 +233,20 @@ sub tokenize
     # Find protected patterns
     my @protected = ();
     foreach my $protected_pattern (@protected_patterns) {
-      foreach ($text =~ /($protected_pattern)/) {
-        push @protected, $_;
+      my $t = $text;
+      while ($t =~ /($protected_pattern)(.*)$/) {
+        push @protected, $1;
+        $t = $2;
       }
     }
 
     for (my $i = 0; $i < scalar(@protected); ++$i) {
       my $subst = sprintf("THISISPROTECTED%.3d", $i);
-      $text =~ s,\Q$protected[$i],$subst,g;
+      $text =~ s,\Q$protected[$i], $subst ,g;
     }
+    $text =~ s/ +/ /g;
+    $text =~ s/^ //g;
+    $text =~ s/ $//g;
 
     # seperate out all "other" special characters
     $text =~ s/([^\p{IsAlnum}\s\.\'\`\,\-])/ $1 /g;
@@ -275,10 +281,10 @@ sub tokenize
     #$text =~ s/([^\p{IsN}])[,]([\p{IsN}])/$1 , $2/g;
 	      
     # turn `into '
-    $text =~ s/\`/\'/g;
+    #$text =~ s/\`/\'/g;
 	
     #turn '' into "
-    $text =~ s/\'\'/ \" /g;
+    #$text =~ s/\'\'/ \" /g;
 
     if ($language eq "en") 
     {

@@ -3,7 +3,6 @@
 #include "moses/StaticData.h"
 #include "moses/InputFileStream.h"
 #include "moses/TranslationOption.h"
-#include "moses/UserMessage.h"
 #include "moses/FactorCollection.h"
 #include "util/exception.hh"
 
@@ -165,12 +164,12 @@ float GlobalLexicalModel::GetFromCacheOrScorePhrase( const TargetPhrase& targetP
   return score;
 }
 
-void GlobalLexicalModel::Evaluate
-(const Hypothesis& hypo,
- ScoreComponentCollection* accumulator) const
+void GlobalLexicalModel::EvaluateInIsolation(const Phrase &source
+    , const TargetPhrase &targetPhrase
+    , ScoreComponentCollection &scoreBreakdown
+    , ScoreComponentCollection &estimatedFutureScore) const
 {
-  accumulator->PlusEquals( this,
-                           GetFromCacheOrScorePhrase(hypo.GetCurrTargetPhrase()) );
+  scoreBreakdown.PlusEquals( this, GetFromCacheOrScorePhrase(targetPhrase) );
 }
 
 bool GlobalLexicalModel::IsUseable(const FactorMask &mask) const

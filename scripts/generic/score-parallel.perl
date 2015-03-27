@@ -13,6 +13,15 @@ sub GetSourcePhrase($);
 sub NumStr($);
 sub CutContextFile($$$);
 
+my $GZIP_EXEC; # = which("pigz"); 
+if(-f "/usr/bin/pigz") {
+  $GZIP_EXEC = 'pigz';
+}
+else {
+  $GZIP_EXEC = 'gzip';
+}
+print STDERR "using $GZIP_EXEC \n";
+
 #my $EXTRACT_SPLIT_LINES = 5000000;
 my $EXTRACT_SPLIT_LINES = 50000000;
 
@@ -27,10 +36,28 @@ my $scoreCmd		= $ARGV[2];
 my $extractFile = $ARGV[3]; # 1st arg of extract argument
 my $lexFile 		= $ARGV[4]; 
 my $ptHalf 			= $ARGV[5]; # output
+my $inverse = 0;
+my $sourceLabelsFile;
+my $partsOfSpeechFile;
 
 my $otherExtractArgs= "";
 for (my $i = 6; $i < $#ARGV; ++$i)
 {
+  if ($ARGV[$i] eq '--SourceLabels') {
+    $sourceLabelsFile = $ARGV[++$i];
+    $otherExtractArgs .= "--SourceLabels --SourceLabelCountsLHS ";
+    next;
+  }
+  if ($ARGV[$i] eq '--PartsOfSpeech') {
+    $partsOfSpeechFile = $ARGV[++$i];
+    $otherExtractArgs .= "--PartsOfSpeech ";
+    next;
+  }
+  if ($ARGV[$i] eq '--Inverse') {
+    $inverse = 1;
+    $otherExtractArgs .= $ARGV[$i] ." ";
+    next;
+  }
   $otherExtractArgs .= $ARGV[$i] ." ";
 }
 #$scoreCmd $extractFile $lexFile $ptHalf $otherExtractArgs
@@ -88,7 +115,7 @@ else
 	}
 
 	my $filePath  = "$TMPDIR/extract.$fileCount.gz";
-	open (OUT, "| gzip -c > $filePath") or die "error starting gzip $!";
+	open (OUT, "| $GZIP_EXEC -c > $filePath") or die "error starting $GZIP_EXEC $!";
 	
 	my $lineCount = 0;
 	my $line;
@@ -121,7 +148,7 @@ else
 				++$fileCount;
 				my $filePath  = $fileCount;
 				$filePath     = "$TMPDIR/extract.$filePath.gz";
-				open (OUT, "| gzip -c > $filePath") or die "error starting gzip $!";
+				open (OUT, "| $GZIP_EXEC -c > $filePath") or die "error starting $GZIP_EXEC $!";
 			}
 		}
 		else
@@ -163,7 +190,7 @@ for (my $i = 0; $i < $fileCount; ++$i)
     $cmd .= "zcat $TMPDIR/phrase-table.half.$numStr.gz | $FlexibilityCmd $TMPDIR/extract.context.$i.gz";
     $cmd .= " --Inverse" if ($otherExtractArgs =~ /--Inverse/);
     $cmd .= " --Hierarchical" if ($otherExtractArgs =~ /--Hierarchical/);
-    $cmd .= " | gzip -c > $TMPDIR/phrase-table.half.$numStr.flex.gz\n";
+    $cmd .= " | $GZIP_EXEC -c > $TMPDIR/phrase-table.half.$numStr.flex.gz\n";
     $cmd .= "mv $TMPDIR/phrase-table.half.$numStr.flex.gz $TMPDIR/phrase-table.half.$numStr.gz\n";
   }
 
@@ -207,7 +234,7 @@ else
     $cmd .= "| LC_ALL=C $sortCmd -T $TMPDIR ";
   }
 
-  $cmd .= " | gzip -c > $ptHalf  2>> /dev/stderr ";
+  $cmd .= " | $GZIP_EXEC -c > $ptHalf  2>> /dev/stderr ";
 }
 print STDERR $cmd;
 systemCheck($cmd);
@@ -257,6 +284,23 @@ if (-e $cocPath)
   }
   close(FHCOC);
 }
+
+# merge source label files
+if (!$inverse && defined($sourceLabelsFile)) 
+{
+  my $cmd = "(echo \"GlueTop 0\"; echo \"GlueX 1\"; echo \"SSTART 2\"; echo \"SEND 3\"; cat $TMPDIR/phrase-table.half.*.gz.syntaxLabels.src | LC_ALL=C sort | uniq | perl -pe \"s/\$/ \@{[\$.+3]}/\") > $sourceLabelsFile";
+  print STDERR "Merging source label files: $cmd \n";
+  `$cmd`;
+}
+
+# merge parts-of-speech files
+if (!$inverse && defined($partsOfSpeechFile)) 
+{
+  my $cmd = "(echo \"SSTART 0\"; echo \"SEND 1\"; cat $TMPDIR/phrase-table.half.*.gz.partsOfSpeech | LC_ALL=C sort | uniq | perl -pe \"s/\$/ \@{[\$.+1]}/\") > $partsOfSpeechFile";
+  print STDERR "Merging parts-of-speech files: $cmd \n";
+  `$cmd`;
+}
+
 
 $cmd = "rm -rf $TMPDIR \n";
 print STDERR $cmd;
@@ -336,7 +380,7 @@ sub CutContextFile($$$)
     my $sourcePhrase;
 
     my $filePath  = "$TMPDIR/extract.context.$fileCount.gz";
-    open (OUT_CONTEXT, "| gzip -c > $filePath") or die "error starting gzip $!";
+    open (OUT_CONTEXT, "| $GZIP_EXEC -c > $filePath") or die "error starting $GZIP_EXEC $!";
 
     if ($lastline ne "") {
         print OUT_CONTEXT "$lastline\n";

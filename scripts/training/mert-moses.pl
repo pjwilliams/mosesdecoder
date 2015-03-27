@@ -127,8 +127,8 @@ my $___NOCASE = 0;
 # Use "--nonorm" to non normalize translation before computing scores
 my $___NONORM = 0;
 
-# set 0 if input type is text, set 1 if input type is confusion network
-my $___INPUTTYPE = 0;
+# set 0 if input type is text, set 1 if input type is confusion network, set 3 if input type is parse tree
+my $___INPUTTYPE;
 
 
 my $mertdir = undef; # path to new mert directory
@@ -159,6 +159,12 @@ my $prev_aggregate_nbl_size = -1; # number of previous step to consider when loa
                                   # 1 means 1 previous data , i.e. from the actual iteration and from the previous one
                                   # and so on
 my $maximum_iterations = 25;
+
+# Simulated post-editing
+my $___MOSES_SIM_PE = "$SCRIPTS_ROOTDIR/generic/moses_sim_pe.py";
+my $___DEV_SYMAL = undef;
+my $dev_symal_abs = undef;
+my $working_dir_abs = undef;
 
 use Getopt::Long;
 GetOptions(
@@ -213,7 +219,8 @@ GetOptions(
   "batch-mira-args=s" => \$batch_mira_args,
   "promix-training=s" => \$__PROMIX_TRAINING,
   "promix-table=s" => \@__PROMIX_TABLES,
-  "threads=i" => \$__THREADS
+  "threads=i" => \$__THREADS,
+  "spe-symal=s" => \$___DEV_SYMAL
 ) or exit(1);
 
 # the 4 required parameters can be supplied on the command line directly
@@ -308,6 +315,8 @@ Options:
   --threads=NUMBER          ... Use multi-threaded mert (must be compiled in).
   --historic-interpolation  ... Interpolate optimized weights with prior iterations' weight
                                 (parameter sets factor [0;1] given to current weights)
+  --spe-symal=SYMAL      ... Use simulated post-editing when decoding.
+                             (SYMAL aligns input to refs)
 ";
   exit 1;
 }
@@ -377,14 +386,28 @@ if ($__PROMIX_TRAINING) {
   die "To use promix training, need to specify a filter and binarisation command" unless   $filtercmd =~ /Binarizer/;
 }
 
-$mertargs = "" if !defined $mertargs;
+if (!defined $mertargs) {
+  if (defined $batch_mira_args) {
+    $mertargs = $batch_mira_args;
+  }
+  else {
+    $mertargs = "";
+  }
+}
 
 my $scconfig = undef;
-if ($mertargs =~ /\-\-scconfig\s+(.+?)(\s|$)/) {
+if ($mertargs =~ /\-\-scconfig(?:\s+|=)(.+?)(\s|$)/) {
   $scconfig = $1;
   $scconfig =~ s/\,/ /g;
-  $mertargs =~ s/\-\-scconfig\s+(.+?)(\s|$)//;
+  $mertargs =~ s/\-\-scconfig(?:\s+|=)(.+?)(\s|$)//;
 }
+
+my $sctype = "--sctype BLEU";
+if ($mertargs =~ /(\-\-sctype(?:\s+|=).+?)(\s|$)/) {
+  $sctype = $1;
+  $mertargs =~ s/(\-\-sctype(?:\s+|=)+.+?)(\s|$)//;
+}
+
 
 # handling reference lengh strategy
 $scconfig .= &setup_reference_length_type();
@@ -398,8 +421,7 @@ $scconfig =~ s/\s+/,/g;
 
 $scconfig = "--scconfig $scconfig" if ($scconfig);
 
-my $mert_extract_args = $mertargs;
-$mert_extract_args .= " $scconfig";
+my $mert_extract_args = "$sctype $scconfig";
 
 $extractorargs = "" unless $extractorargs;
 $mert_extract_args .= " $extractorargs";
@@ -410,7 +432,7 @@ $proargs = "" unless $proargs;
 
 my $mert_mert_args = "$mertargs $mertmertargs";
 $mert_mert_args =~ s/\-+(binary|b)\b//;
-$mert_mert_args .= " $scconfig";
+$mert_mert_args .= "$sctype $scconfig";
 if ($___ACTIVATE_FEATURES) {
   $mert_mert_args .= " -o \"$___ACTIVATE_FEATURES\"";
 }
@@ -465,6 +487,12 @@ if ($___DECODER_FLAGS =~ /(^|\s)-(config|f) /
     || $___DECODER_FLAGS =~ /(^|\s)-(global-lexical-file) /
   ) {
   die "It is forbidden to supply any of -config, -ttable-file, -distortion-file, -generation-file or -lmodel-file in the --decoder-flags.\nPlease use only the --config option to give the config file that lists all the supplementary files.";
+}
+
+# Paths needed for simulated post-editing
+$working_dir_abs = ensure_full_path($___WORKING_DIR);
+if (defined $___DEV_SYMAL) {
+   $dev_symal_abs = ensure_full_path($___DEV_SYMAL);
 }
 
 # as weights are normalized in the next steps (by cmert)
@@ -548,8 +576,9 @@ if ($___FILTER_PHRASE_TABLE) {
 my $featlist = get_featlist_from_moses($___CONFIG);
 $featlist = insert_ranges_to_featlist($featlist, $___RANGES);
 
-# Mark which features are disabled:
+# Mark which features are disabled 
 if (defined $___ACTIVATE_FEATURES) {
+  $featlist->{"enabled"}    = undef;
   my %enabled = map { ($_, 1) } split /[, ]+/, $___ACTIVATE_FEATURES;
   my %cnt;
   for (my $i = 0; $i < scalar(@{$featlist->{"names"}}); $i++) {
@@ -863,8 +892,8 @@ while (1) {
     $mira_settings .= "$batch_mira_args ";
   }
 
-  $mira_settings .= " --dense-init run$run.$weights_in_file";
-  #$mira_settings .= " --dense-init run$run.dense";
+  #$mira_settings .= " --dense-init run$run.$weights_in_file";
+  $mira_settings .= " --dense-init run$run.dense";
   if (-e "run$run.sparse-weights") {
     $mira_settings .= " --sparse-init run$run.sparse-weights";
   }
@@ -1098,7 +1127,16 @@ if($___RETURN_BEST_DEV) {
   my $bestbleu=0;
   my $evalout = "eval.out";
   for (my $i = 1; $i < $run; $i++) {
-    my $cmd = "$mert_eval_cmd --reference " . join(",", @references) . " -s BLEU --candidate run$i.out";
+    my $candidate;
+    if ($___HG_MIRA) {
+      die "File not found: run$i.out" unless -r "run$i.out";
+      $candidate = "--candidate run$i.out";
+    }
+    else {
+      die "File not found: run$i.best$___N_BEST_LIST_SIZE.out.gz" unless -r "run$i.best$___N_BEST_LIST_SIZE.out.gz";
+      $candidate = "--nbest run$i.best$___N_BEST_LIST_SIZE.out.gz";
+    }
+    my $cmd = "$mert_eval_cmd --reference " . join(",", @references) . " $mert_extract_args $candidate";
     $cmd .= " -l $__REMOVE_SEGMENTATION" if defined( $__PROMIX_TRAINING);
     safesystem("$cmd 2> /dev/null 1> $evalout");
     open my $fh, '<', $evalout or die "Can't read $evalout : $!";
@@ -1117,6 +1155,8 @@ if($___RETURN_BEST_DEV) {
   }
   my $best_featlist = get_featlist_from_file("run$bestit.dense");
   $best_featlist->{"untuneables"} = $featlist->{"untuneables"};
+  $best_featlist->{"allcomponentsuntuneable"} = $featlist->{"allcomponentsuntuneable"};
+  $best_featlist->{"skippeduntuneablecomponents"} = $featlist->{"skippeduntuneablecomponents"};
   create_config($___CONFIG_ORIG, "./moses.ini", $best_featlist,
                 $bestit, $bestbleu, $best_sparse_file);
 }
@@ -1207,10 +1247,26 @@ sub run_decoder {
     }
     # moses now does not seem accept "-tm X -tm Y" but needs "-tm X Y"
     my %model_weights;
+    my $valcnt = 0;
+    my $offset = 0;
     for(my $i=0; $i<scalar(@{$featlist->{"names"}}); $i++) {
       my $name = $featlist->{"names"}->[$i];
-      $model_weights{$name} = "$name=" if !defined $model_weights{$name};
+      if (!defined $model_weights{$name}) {
+        $model_weights{$name} = "$name=";
+        $valcnt = 0;
+        while (defined $featlist->{"skippeduntuneablecomponents"}->{$name}{$valcnt+$offset}) {
+          #$model_weights{$name} .= sprintf " %.6f", $oldvalues{$name}{$valcnt+$offset};
+          $model_weights{$name} .= sprintf " x";
+          $offset++;
+        }
+      }
       $model_weights{$name} .= sprintf " %.6f", $vals[$i];
+      $valcnt++;
+      while (defined $featlist->{"skippeduntuneablecomponents"}->{$name}{$valcnt+$offset}) {
+        #$model_weights{$name} .= sprintf " %.6f", $oldvalues{$name}{$valcnt+$offset};
+        $model_weights{$name} .= sprintf " x";
+        $offset++;
+      }
     }
     my $decoder_config = "";
     $decoder_config = "-weight-overwrite '" . join(" ", values %model_weights) ."'" unless $___USE_CONFIG_WEIGHTS_FIRST && $run==1;
@@ -1228,14 +1284,24 @@ sub run_decoder {
 
     if (defined $___JOBS && $___JOBS > 0) {
       die "Hypergraph mira not supported by moses-parallel" if $___HG_MIRA;
-      $decoder_cmd = "$moses_parallel_cmd $pass_old_sge -config $___CONFIG -inputtype $___INPUTTYPE -qsub-prefix mert$run -queue-parameters \"$queue_flags\" -decoder-parameters \"$___DECODER_FLAGS $decoder_config\" $lsamp_cmd -n-best-list \"$filename $___N_BEST_LIST_SIZE\" -input-file $___DEV_F -jobs $___JOBS -decoder $___DECODER > run$run.out";
+      $decoder_cmd = "$moses_parallel_cmd $pass_old_sge -config $___CONFIG";
+      $decoder_cmd .= " -inputtype $___INPUTTYPE" if defined($___INPUTTYPE); 
+      $decoder_cmd .= " -qsub-prefix mert$run -queue-parameters \"$queue_flags\" -decoder-parameters \"$___DECODER_FLAGS $decoder_config\" $lsamp_cmd -n-best-list \"$filename $___N_BEST_LIST_SIZE distinct\" -input-file $___DEV_F -jobs $___JOBS -decoder $___DECODER > run$run.out";
     } else {
-      my $nbest_list_cmd = "-n-best-list $filename $___N_BEST_LIST_SIZE";
+      my $nbest_list_cmd = "-n-best-list $filename $___N_BEST_LIST_SIZE distinct";
       if ($___HG_MIRA) {
         safesystem("rm -rf $hypergraph_dir");
         $nbest_list_cmd = "-output-search-graph-hypergraph true gz";
       }
-      $decoder_cmd = "$___DECODER $___DECODER_FLAGS  -config $___CONFIG -inputtype $___INPUTTYPE $decoder_config $lsamp_cmd $nbest_list_cmd  -input-file $___DEV_F > run$run.out";
+      $decoder_cmd = "$___DECODER $___DECODER_FLAGS  -config $___CONFIG";
+      $decoder_cmd .= " -inputtype $___INPUTTYPE" if defined($___INPUTTYPE);
+      $decoder_cmd .= " $decoder_config $lsamp_cmd $nbest_list_cmd  -input-file $___DEV_F";
+      if (defined $___DEV_SYMAL) {
+        # If simulating post-editing, route command through moses_sim_pe.py
+        # Always use single (first) reference.  Simulated post-editing undefined for multiple references.
+        $decoder_cmd = "$___MOSES_SIM_PE $decoder_cmd -ref $references[0] -symal $dev_symal_abs -tmp $working_dir_abs > run$run.out";
+      }
+      $decoder_cmd .= " > run$run.out";
     }
 
     print STDERR "Executing: $decoder_cmd \n";
@@ -1309,7 +1375,9 @@ sub get_featlist_from_moses {
     print STDERR "Using cached features list: $featlistfn\n";
   } else {
     print STDERR "Asking moses for feature names and values from $___CONFIG\n";
-    my $cmd = "$___DECODER $___DECODER_FLAGS -config $configfn  -inputtype $___INPUTTYPE -show-weights > $featlistfn";
+    my $cmd = "$___DECODER $___DECODER_FLAGS -config $configfn";
+    $cmd .= " -inputtype $___INPUTTYPE" if defined($___INPUTTYPE);
+    $cmd .= " -show-weights > $featlistfn";
     print STDERR "Executing: $cmd\n";
     safesystem($cmd) or die "Failed to run moses with the config $configfn";
   }
@@ -1322,8 +1390,11 @@ sub get_featlist_from_file {
   my @names = ();
   my @startvalues = ();
   my @untuneables = ();
+  my @allcomponentsuntuneable = ();
+  my %skippeduntuneablecomponents = ();
   open my $fh, '<', $featlistfn or die "Can't read $featlistfn : $!";
   my $nr = 0;
+  my $i = 0;
   my @errs = ();
   while (<$fh>) {
     $nr++;
@@ -1333,11 +1404,25 @@ sub get_featlist_from_file {
       next if (!defined($valuesStr));
     
       my @values = split(/ /, $valuesStr);
-		  foreach my $value (@values) {
-			  push @errs, "$featlistfn:$nr:Bad initial value of $longname: $value\n"
-				  if $value !~ /^[+-]?[0-9.\-e]+$/;
-			  push @names, $longname;
-			  push @startvalues, $value;
+      my $valcnt = 0;
+      my $hastuneablecomponent = 0;
+      foreach my $value (@values) {
+        if ($value =~ /^UNTUNEABLECOMPONENT$/) {
+          $skippeduntuneablecomponents{$longname}{$valcnt} = 1;
+          $i++;
+          $valcnt++;
+        } elsif ($value =~ /^[+-]?[0-9.\-e]+$/) {
+          push @names, $longname;
+          push @startvalues, $value;
+          $i++;
+          $valcnt++;
+          $hastuneablecomponent = 1;
+        } else {
+          push @errs, "$featlistfn:$nr:Bad initial value of $longname: $value\n"
+        }
+      }
+      if (!$hastuneablecomponent) {
+        push @allcomponentsuntuneable, $longname;
       }
     }
     elsif (/^(\S+) UNTUNEABLE$/) {
@@ -1351,7 +1436,7 @@ sub get_featlist_from_file {
     warn join("", @errs);
     exit 1;
   }
-  return {"names"=>\@names, "values"=>\@startvalues, "untuneables"=>\@untuneables};
+  return {"names"=>\@names, "values"=>\@startvalues, "untuneables"=>\@untuneables, "allcomponentsuntuneable"=>\@allcomponentsuntuneable, "skippeduntuneablecomponents"=>\%skippeduntuneablecomponents};
 }
 
 
@@ -1447,6 +1532,8 @@ sub create_config {
   print $out "# We were before running iteration $iteration\n";
   print $out "# finished ".`date`;
 
+  my %oldvalues = ();
+
   my $line = <$ini_fh>;
   while(1) {
     last unless $line;
@@ -1461,34 +1548,51 @@ sub create_config {
     # parameter name
     my $parameter = $1;
 
-		if ($parameter eq "weight") {
-			# leave weights 'til last. We're changing it
-			while ($line = <$ini_fh>) {
-			  last if $line =~ /^\[/;
-			  if ($line =~ /^([^_=\s]+)/) {
-			    for( @{$featlist->{"untuneables"}} ){
-			      if ($1 eq $_ ) {# if weight is untuneable, copy it into new config
-			        push @keep_weights, $line;
-			      }
-			    }
-			  }
-			}
-		}
-	  elsif (defined($P{$parameter})) {
-			# found a param (thread, verbose etc) that we're overriding. Leave to the end
-			while ($line = <$ini_fh>) {
-			  last if $line =~ /^\[/;
-			}
-	  }
-		else {
-			# unchanged parameter, write old
-			print $out "[$parameter]\n";
-			while ($line = <$ini_fh>) {
-				last if $line =~ /^\[/;
-				print $out $line;
-			}
-		}
-	}
+    if ($parameter eq "weight") {
+      # leave weights 'til last. We're changing it
+      while ($line = <$ini_fh>) {
+        last if $line =~ /^\[/;
+        if ($line =~ /^(\S+)= (.+)$/) {
+          for( @{$featlist->{"untuneables"}} ){
+            if ($1 eq $_ ) {# if weight is untuneable, copy it into new config
+              push @keep_weights, $line;
+            }
+          }
+          for( @{$featlist->{"allcomponentsuntuneable"}} ){
+            if ($1 eq $_ ) {# if all dense weights are untuneable, copy it into new config
+              push @keep_weights, $line;
+            }
+          }
+
+          my ($longname, $valuesStr) = ($1, $2);
+          next if (!defined($valuesStr));
+          print $valuesStr;
+          my @values = split(/ /, $valuesStr);
+          my $valcnt = 0;
+          foreach my $value (@values) {
+            if ($value =~ /^[+-]?[0-9.\-e]+$/) {
+              $oldvalues{$longname}{$valcnt} = $value;
+            }
+            $valcnt++;
+          }
+        }
+      }
+    }
+    elsif (defined($P{$parameter})) {
+      # found a param (thread, verbose etc) that we're overriding. Leave to the end
+      while ($line = <$ini_fh>) {
+        last if $line =~ /^\[/;
+      }
+    }
+    else {
+      # unchanged parameter, write old
+      print $out "[$parameter]\n";
+      while ($line = <$ini_fh>) {
+        last if $line =~ /^\[/;
+        print $out $line;
+      }
+    }
+  }
 
   # write all additional parameters
   foreach my $parameter (keys %P) {
@@ -1503,20 +1607,30 @@ sub create_config {
   
   my $prevName = "";
   my $outStr = "";
+  my $valcnt = 0;
+  my $offset = 0;
   for (my $i = 0; $i < scalar(@{$featlist->{"names"}}); $i++) {
     my $name = $featlist->{"names"}->[$i];
     my $val = $featlist->{"values"}->[$i];
     
-    if ($prevName eq $name) {
-      $outStr .= " $val";
+    if ($prevName ne $name) {
+      print $out "$outStr\n";
+      $valcnt = 0;
+      $outStr = "$name=";
+      $prevName = $name;
+      while (defined $featlist->{"skippeduntuneablecomponents"}->{$name}{$valcnt+$offset}) {
+        $outStr .= " $oldvalues{$name}{$valcnt+$offset}";
+        $offset++;
+      }
     }
-    else {
-  		print $out "$outStr\n";
-  		$outStr = "$name= $val";
-  		$prevName = $name;
+    $outStr .= " $val";
+    $valcnt++;
+    while (defined $featlist->{"skippeduntuneablecomponents"}->{$name}{$valcnt+$offset}) {
+      $outStr .= " $oldvalues{$name}{$valcnt+$offset}";
+      $offset++;
     }
   }
-	print $out "$outStr\n";
+  print $out "$outStr\n";
 
   for (@keep_weights) {
      print $out $_;
@@ -1607,7 +1721,7 @@ sub create_extractor_script() {
 
   open my $out, '>', $script_path
       or die "Couldn't open $script_path for writing: $!\n";
-  print $out "#!/bin/bash\n";
+  print $out "#!/usr/bin/env bash\n";
   print $out "cd $outdir\n";
   print $out "$cmd\n";
   close $out;

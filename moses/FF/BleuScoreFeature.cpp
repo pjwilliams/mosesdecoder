@@ -1,7 +1,6 @@
 #include "BleuScoreFeature.h"
 
 #include "moses/StaticData.h"
-#include "moses/UserMessage.h"
 #include "moses/Hypothesis.h"
 #include "moses/FactorCollection.h"
 #include "util/exception.hh"
@@ -28,7 +27,7 @@ int BleuScoreState::Compare(const FFState& o) const
   if (&o == this)
     return 0;
 
-  if (StaticData::Instance().IsChart())
+  if (StaticData::Instance().IsSyntax())
     return 0;
 
   const BleuScoreState& other = dynamic_cast<const BleuScoreState&>(o);
@@ -118,7 +117,7 @@ void BleuScoreFeature::SetParameter(const std::string& key, const std::string& v
       }
       string line;
       while (getline(in,line)) {
-        /*  if (GetSearchAlgorithm() == ChartDecoding) {
+        /*  if (GetSearchAlgorithm() == CYKPlus) {
         stringstream tmp;
         tmp << "<s> " << line << " </s>";
         line = tmp.str();
@@ -502,9 +501,9 @@ void BleuScoreFeature::GetClippedNgramMatchesAndCounts(Phrase& phrase,
  * Given a previous state, compute Bleu score for the updated state with an additional target
  * phrase translated.
  */
-FFState* BleuScoreFeature::Evaluate(const Hypothesis& cur_hypo,
-                                    const FFState* prev_state,
-                                    ScoreComponentCollection* accumulator) const
+FFState* BleuScoreFeature::EvaluateWhenApplied(const Hypothesis& cur_hypo,
+    const FFState* prev_state,
+    ScoreComponentCollection* accumulator) const
 {
   if (!m_enabled) return new BleuScoreState();
 
@@ -563,7 +562,7 @@ FFState* BleuScoreFeature::Evaluate(const Hypothesis& cur_hypo,
   return new_state;
 }
 
-FFState* BleuScoreFeature::EvaluateChart(const ChartHypothesis& cur_hypo, int featureID,
+FFState* BleuScoreFeature::EvaluateWhenApplied(const ChartHypothesis& cur_hypo, int featureID,
     ScoreComponentCollection* accumulator ) const
 {
   if (!m_enabled) return new BleuScoreState();

@@ -143,11 +143,17 @@ public:
     m_bitmap[pos] = value;
   }
   //! set value between 2 positions, inclusive
-  void SetValue( size_t startPos, size_t endPos, bool value ) {
-    for(size_t pos = startPos ; pos <= endPos ; pos++) {
+  void
+  SetValue( size_t startPos, size_t endPos, bool value ) {
+    for(size_t pos = startPos ; pos <= endPos ; pos++)
       m_bitmap[pos] = value;
-    }
   }
+
+  void
+  SetValue(WordsRange const& range, bool val) {
+    SetValue(range.GetStartPos(), range.GetEndPos(), val);
+  }
+
   //! whether every word has been translated
   bool IsComplete() const {
     return GetSize() == GetNumWordsCovered();
@@ -224,7 +230,7 @@ public:
 
   //! converts bitmap into an integer ID, with an additional span covered
   WordsBitmapID GetIDPlus( size_t startPos, size_t endPos ) const {
-	  assert(m_size < (1<<16));
+    assert(m_size < (1<<16));
 
     size_t start = GetFirstGapPos();
     if (start == NOT_FOUND) start = m_size; // nothing left

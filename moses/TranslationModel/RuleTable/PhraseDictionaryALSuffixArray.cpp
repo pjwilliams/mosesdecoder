@@ -12,7 +12,6 @@
 #include "moses/InputFileStream.h"
 #include "moses/TypeDef.h"
 #include "moses/StaticData.h"
-#include "moses/UserMessage.h"
 #include "Loader.h"
 #include "LoaderFactory.h"
 #include "util/exception.hh"
@@ -49,8 +48,8 @@ void PhraseDictionaryALSuffixArray::InitializeForInput(InputType const& source)
   bool ret = loader->Load(m_input, m_output, grammarFile, m_tableLimit,
                           *this);
 
-  UTIL_THROW_IF2(ret == NULL,
-		  "Rules not successfully loaded for sentence id " << translationId);
+  UTIL_THROW_IF2(!ret,
+                 "Rules not successfully loaded for sentence id " << translationId);
 }
 
 void PhraseDictionaryALSuffixArray::CleanUpAfterSentenceProcessing(const InputType &source)

@@ -1,5 +1,4 @@
-#ifndef moses_SourceWordDeletionFeature_h
-#define moses_SourceWordDeletionFeature_h
+#pragma once
 
 #include <string>
 #include <boost/unordered_set.hpp>
@@ -28,23 +27,29 @@ public:
 
   bool IsUseable(const FactorMask &mask) const;
 
-  void Evaluate(const Phrase &source
-                , const TargetPhrase &targetPhrase
-                , ScoreComponentCollection &scoreBreakdown
-                , ScoreComponentCollection &estimatedFutureScore) const;
-  void Evaluate(const InputType &input
-                , const InputPath &inputPath
-                , const TargetPhrase &targetPhrase
-                , const StackVec *stackVec
-                , ScoreComponentCollection &scoreBreakdown
-                , ScoreComponentCollection *estimatedFutureScore = NULL) const
-  {}
-  void Evaluate(const Hypothesis& hypo,
-                ScoreComponentCollection* accumulator) const
-  {}
-  void EvaluateChart(const ChartHypothesis &hypo,
-                     ScoreComponentCollection* accumulator) const
-  {}
+  void EvaluateInIsolation(const Phrase &source
+                           , const TargetPhrase &targetPhrase
+                           , ScoreComponentCollection &scoreBreakdown
+                           , ScoreComponentCollection &estimatedFutureScore) const;
+  void EvaluateWithSourceContext(const InputType &input
+                                 , const InputPath &inputPath
+                                 , const TargetPhrase &targetPhrase
+                                 , const StackVec *stackVec
+                                 , ScoreComponentCollection &scoreBreakdown
+                                 , ScoreComponentCollection *estimatedFutureScore = NULL) const {
+  }
+
+  void EvaluateTranslationOptionListWithSourceContext(const InputType &input
+      , const TranslationOptionList &translationOptionList) const {
+  }
+
+
+  void EvaluateWhenApplied(const Hypothesis& hypo,
+                           ScoreComponentCollection* accumulator) const {
+  }
+  void EvaluateWhenApplied(const ChartHypothesis &hypo,
+                           ScoreComponentCollection* accumulator) const {
+  }
 
   void ComputeFeatures(const Phrase &source,
                        const TargetPhrase& targetPhrase,
@@ -56,4 +61,3 @@ public:
 
 }
 
-#endif // moses_SourceWordDeletionFeature_h

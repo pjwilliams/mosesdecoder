@@ -30,6 +30,17 @@ my $weights = "";
 my $baselineExtract;
 my $glueFile;
 my $targetIndicesFile;
+my $phraseOrientation = 0;
+my $phraseOrientationPriorsFile;
+
+my $GZIP_EXEC; # = which("pigz"); 
+if(-f "/usr/bin/pigz") {
+  $GZIP_EXEC = 'pigz';
+}
+else {
+  $GZIP_EXEC = 'gzip';
+}
+print STDERR "using $GZIP_EXEC \n";
 
 for (my $i = 8; $i < $#ARGV + 1; ++$i)
 {
@@ -48,6 +59,10 @@ for (my $i = 8; $i < $#ARGV + 1; ++$i)
   }
   if ($ARGV[$i] eq '--WriteTargetIndices') {
     $targetIndicesFile = $ARGV[++$i];
+  }
+  $phraseOrientation = 1 if $ARGV[$i] eq "--PhraseOrientation";
+  if ($ARGV[$i] eq '--PhraseOrientationPriors') {
+    $phraseOrientationPriorsFile = $ARGV[++$i];
     next;
   }
 
@@ -184,11 +199,11 @@ if (defined($baselineExtract)) {
 		$catOCmd .= "$baselineExtract.o$sorted.gz ";
 }
 
-$catCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | gzip -c > $extract.sorted.gz 2>> /dev/stderr \n";
-$catInvCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | gzip -c > $extract.inv.sorted.gz 2>> /dev/stderr \n";
-$catOCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | gzip -c > $extract.o.sorted.gz 2>> /dev/stderr \n";
-$catContextCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | uniq | gzip -c > $extract.context.sorted.gz 2>> /dev/stderr \n";
-$catContextInvCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | uniq | gzip -c > $extract.context.inv.sorted.gz 2>> /dev/stderr \n";
+$catCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | $GZIP_EXEC -c > $extract.sorted.gz 2>> /dev/stderr \n";
+$catInvCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | $GZIP_EXEC -c > $extract.inv.sorted.gz 2>> /dev/stderr \n";
+$catOCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | $GZIP_EXEC -c > $extract.o.sorted.gz 2>> /dev/stderr \n";
+$catContextCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | uniq | $GZIP_EXEC -c > $extract.context.sorted.gz 2>> /dev/stderr \n";
+$catContextInvCmd .= " | LC_ALL=C $sortCmd -T $TMPDIR 2>> /dev/stderr | uniq | $GZIP_EXEC -c > $extract.context.inv.sorted.gz 2>> /dev/stderr \n";
 if (defined($targetIndicesFile)) {
   $catTargetIndicesCmd .= " > $targetIndicesFile 2>> /dev/stderr \n"
 }
@@ -233,11 +248,37 @@ foreach (@children) {
 	waitpid($_, 0);
 }
 
-# glue rules
+# merge glue rules
 if (defined($glueFile)) {
   my $cmd = "cat $TMPDIR/glue.* | LC_ALL=C sort | uniq > $glueFile";
   print STDERR "Merging glue rules: $cmd \n";
   print STDERR `$cmd`;
+}
+
+# merge phrase orientation priors (GHKM extraction)
+if ($phraseOrientation && defined($phraseOrientationPriorsFile)) {
+  print STDERR "Merging phrase orientation priors\n";
+
+  my @orientationPriorsCountFiles = glob("$TMPDIR/*.phraseOrientationPriors");
+  my %priorCounts;
+
+  foreach my $filenamePhraseOrientationPriors (@orientationPriorsCountFiles) {
+    if (-f $filenamePhraseOrientationPriors) {
+      open my $infilePhraseOrientationPriors, '<', $filenamePhraseOrientationPriors or die "cannot open $filenamePhraseOrientationPriors: $!";
+      while (my $line = <$infilePhraseOrientationPriors>) { 
+        print $line; 
+        my ($key, $value) = split / /, $line;
+        $priorCounts{$key} += $value;
+      }
+      close $infilePhraseOrientationPriors;
+    }
+  }
+
+  open my $outPhraseOrientationPriors, '>', $phraseOrientationPriorsFile or die "cannot open $phraseOrientationPriorsFile: $!";
+  foreach my $key (sort keys %priorCounts) {
+    print $outPhraseOrientationPriors $key." ".$priorCounts{$key}."\n";
+  }
+  close($outPhraseOrientationPriors);
 }
 
 # delete temporary files

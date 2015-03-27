@@ -47,14 +47,20 @@ class ConstraintModel : public StatefulFeatureFunction
   bool IsUseable(const FactorMask &) const { return true; }
 
   // Override FeatureFunction function.
-  void Evaluate(const Phrase &, const TargetPhrase &,
-                ScoreComponentCollection &,
-                ScoreComponentCollection &) const {}
+  void EvaluateInIsolation(const Phrase &, const TargetPhrase &,
+                           ScoreComponentCollection &,
+                           ScoreComponentCollection &) const {}
 
   // Override FeatureFunction function.
-  void Evaluate(const InputType &, const InputPath &, const TargetPhrase &,
-                const StackVec *, ScoreComponentCollection &,
-                ScoreComponentCollection *) const {}
+  void EvaluateWithSourceContext(const InputType &, const InputPath &,
+                                 const TargetPhrase &, const StackVec *,
+                                 ScoreComponentCollection &,
+                                 ScoreComponentCollection *) const {}
+
+  // Override FeatureFunction function.
+  void EvaluateTranslationOptionListWithSourceContext(
+      const InputType &,
+      const TranslationOptionList &) const {}
 
   // Override FeatureFunction function.
   void Load();
@@ -63,12 +69,12 @@ class ConstraintModel : public StatefulFeatureFunction
   void SetParameter(const std::string &, const std::string &);
 
   // Override StatefulFeatureFunction function.
-  FFState* Evaluate(const Hypothesis &, const FFState *,
-                    ScoreComponentCollection *) const;
+  FFState* EvaluateWhenApplied(const Hypothesis &, const FFState *,
+                               ScoreComponentCollection *) const;
 
   // Override StatefulFeatureFunction function.
-  FFState *EvaluateChart(const ChartHypothesis &, int,
-                         ScoreComponentCollection *) const;
+  FFState *EvaluateWhenApplied(const ChartHypothesis &, int,
+                               ScoreComponentCollection *) const;
 
   // Override StatefulFeatureFunction function.
   const FFState *EmptyHypothesisState(const InputType &) const;

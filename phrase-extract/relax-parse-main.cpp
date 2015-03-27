@@ -31,15 +31,15 @@ int main(int argc, char* argv[])
 
   // loop through all sentences
   int i=0;
-  string inBuffer;
-  while(getline(cin, inBuffer)) {
+  string inBufferString;
+  while(cin.peek() != EOF) {
+    getline(cin,inBufferString);
     i++;
     if (i%1000 == 0) cerr << "." << flush;
     if (i%10000 == 0) cerr << ":" << flush;
     if (i%100000 == 0) cerr << "!" << flush;
 
     // process into syntax tree representation
-    string inBufferString = string( inBuffer );
     set< string > labelCollection;         // set of labels, not used
     map< string, int > topLabelCollection; // count of top labels, not used
     SyntaxTree tree;
@@ -77,7 +77,7 @@ void init(int argc, char* argv[])
 
   if (argc < 2) {
     cerr << "syntax: relax-parse < in-parse > out-parse ["
-         << " --LeftBinarize | ---RightBinarize |"
+         << " --LeftBinarize | --RightBinarize |"
          << " --SAMT 1-4 ]" << endl;
     exit(1);
   }

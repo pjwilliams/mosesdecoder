@@ -2,7 +2,16 @@
 
 use strict;
 
-my ($language) = @ARGV;
+my $language = "en";
+my $PENN = 0;
+
+while (@ARGV) {
+    $_ = shift;
+    /^-b$/ && ($| = 1, next); # not buffered (flush each line)
+    /^-l$/ && ($language = shift, next);
+    /^[^\-]/ && ($language = $_, next);
+  	/^-penn$/ && ($PENN = 1, next);
+}
 
 while(<STDIN>) {
     s/\r//g;
@@ -16,6 +25,11 @@ while(<STDIN>) {
     s/ :/:/g;
     s/ ;/;/g;
     # normalize unicode punctuation
+    if ($PENN == 0) {
+      s/\`/\'/g;
+      s/\'\'/ \" /g;
+    }
+
     s/„/\"/g;
     s/“/\"/g;
     s/”/\"/g;
@@ -61,7 +75,6 @@ while(<STDIN>) {
 	s/(\.+)\"(\s*[^<])/\"$1$2/g; # don't fix period at end of sentence
     }
 
-    print STDERR $_ if /﻿/;
 
     if ($language eq "de" || $language eq "es" || $language eq "cz" || $language eq "cs" || $language eq "fr") {
 	s/(\d) (\d)/$1,$2/g;

@@ -87,17 +87,22 @@ public:
   virtual void IncrementalCallback(Incremental::Manager &manager) const;
   virtual void ReportHistoryOrder(std::ostream &out,const Phrase &phrase) const;
 
-  virtual void Evaluate(const Phrase &source
-                        , const TargetPhrase &targetPhrase
-                        , ScoreComponentCollection &scoreBreakdown
-                        , ScoreComponentCollection &estimatedFutureScore) const;
-  void Evaluate(const InputType &input
-                , const InputPath &inputPath
-                , const TargetPhrase &targetPhrase
-                , const StackVec *stackVec
-                , ScoreComponentCollection &scoreBreakdown
-                , ScoreComponentCollection *estimatedFutureScore = NULL) const
-  {}
+  virtual void EvaluateInIsolation(const Phrase &source
+                                   , const TargetPhrase &targetPhrase
+                                   , ScoreComponentCollection &scoreBreakdown
+                                   , ScoreComponentCollection &estimatedFutureScore) const;
+
+  void EvaluateWithSourceContext(const InputType &input
+                                 , const InputPath &inputPath
+                                 , const TargetPhrase &targetPhrase
+                                 , const StackVec *stackVec
+                                 , ScoreComponentCollection &scoreBreakdown
+                                 , ScoreComponentCollection *estimatedFutureScore = NULL) const {
+  }
+
+  void EvaluateTranslationOptionListWithSourceContext(const InputType &input
+      , const TranslationOptionList &translationOptionList) const {
+  }
 
 };
 

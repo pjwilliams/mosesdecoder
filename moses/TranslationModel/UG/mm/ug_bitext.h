@@ -15,6 +15,10 @@
 //
 // - use multiple agendas for better load balancing and to avoid 
 //   competition for locks
+// 
+
+
+#define UG_BITEXT_TRACK_ACTIVE_THREADS 0
 
 #include <string>
 #include <vector>
@@ -32,6 +36,7 @@
 #include "moses/TranslationModel/UG/generic/sampling/Sampling.h"
 #include "moses/TranslationModel/UG/generic/file_io/ug_stream.h"
 #include "moses/TranslationModel/UG/generic/threading/ug_thread_safe_counter.h"
+#include "moses/FF/LexicalReordering/LexicalReorderingState.h"
 #include "moses/Util.h"
 #include "moses/StaticData.h"
 
@@ -47,6 +52,9 @@
 #include "ug_corpus_token.h"
 #include "tpt_pickler.h"
 #include "ug_lexical_phrase_scorer2.h"
+#include "ug_phrasepair.h"
+#include "ug_lru_cache.h"
+#include "ug_lexical_reordering.h"
 
 #define PSTATS_CACHE_THRESHOLD 50
 
@@ -56,40 +64,20 @@ namespace Moses {
   class Mmsapt;
   namespace bitext
   {
+
+    template<typename TKN> class Bitext;
+    template<typename TKN> class PhrasePair;
     using namespace ugdiss;
 
     template<typename TKN> class Bitext;
 
-    enum PhraseOrientation 
-    {
-      po_first,
-      po_mono,
-      po_jfwd,
-      po_swap,
-      po_jbwd,
-      po_last,
-      po_other
-    };
-
-    PhraseOrientation 
-    find_po_fwd(vector<vector<ushort> >& a1,
-		vector<vector<ushort> >& a2,
-		size_t b1, size_t e1,
-		size_t b2, size_t e2);
-
-    PhraseOrientation 
-    find_po_bwd(vector<vector<ushort> >& a1,
-		vector<vector<ushort> >& a2,
-		size_t b1, size_t e1,
-		size_t b2, size_t e2);
-
     template<typename sid_t, typename off_t, typename len_t>
     void 
-    parse_pid(uint64_t const pid, sid_t & sid, 
+    parse_pid(::uint64_t const pid, sid_t & sid, 
 	      off_t & off, len_t& len)
     {
-      static uint64_t two32 = uint64_t(1)<<32;
-      static uint64_t two16 = uint64_t(1)<<16;
+      static ::uint64_t two32 = ::uint64_t(1)<<32;
+      static ::uint64_t two16 = ::uint64_t(1)<<16;
       len = pid%two16;
       off = (pid%two32)>>16;
       sid = pid>>32;
@@ -108,7 +96,7 @@ namespace Moses {
       float    my_wcnt; // weighted count 
       uint32_t my_cnt2;
       vector<pair<size_t, vector<uchar> > > my_aln; 
-      uint32_t ofwd[7], obwd[7];
+      uint32_t ofwd[Moses::LRModel::NONE+1], obwd[Moses::LRModel::NONE+1];
     public:
       jstats();
       jstats(jstats const& other);
@@ -120,6 +108,7 @@ namespace Moses {
       void add(float w, vector<uchar> const& a, uint32_t const cnt2,
 	       uint32_t fwd_orient, uint32_t bwd_orient);
       void invalidate();
+      void validate();
       bool valid();
       uint32_t dcnt_fwd(PhraseOrientation const idx) const;
       uint32_t dcnt_bwd(PhraseOrientation const idx) const;
@@ -128,9 +117,13 @@ namespace Moses {
     struct 
     pstats
     {
+
+#if UG_BITEXT_TRACK_ACTIVE_THREADS
       static ThreadSafeCounter active;
+#endif
       boost::mutex lock;               // for parallel gathering of stats
-      boost::condition_variable ready; // consumers can wait for this data structure to be ready.
+      boost::condition_variable ready; /* consumers can wait for this
+					* data structure to be ready. */
       
       size_t raw_cnt;    // (approximate) raw occurrence count 
       size_t sample_cnt; // number of instances selected during sampling
@@ -138,10 +131,11 @@ namespace Moses {
       size_t sum_pairs;
       size_t in_progress; // keeps track of how many threads are currently working on this
 
-      uint32_t ofwd[po_other+1], obwd[po_other+1];
-
-      // typedef typename boost::unordered_map<uint64_t, jstats> trg_map_t;
-      typedef typename std::map<uint64_t, jstats> trg_map_t;
+      // size_t Moses::LRModel::ReorderingType 
+      uint32_t ofwd[Moses::LRModel::NONE+1], obwd[Moses::LRModel::NONE+1];
+      
+      // typedef typename boost::unordered_map<typename ::uint64_t, jstats> trg_map_t;
+      typedef std::map<typename ::uint64_t, jstats> trg_map_t;
       trg_map_t trg;
       pstats();
       ~pstats();
@@ -150,50 +144,320 @@ namespace Moses {
       size_t count_workers() { return in_progress; } 
 
       bool 
-      add(uint64_t const pid, 
+      add(::uint64_t const pid, 
 	  float    const w, 
 	  vector<uchar> const& a, 
 	  uint32_t      const cnt2,
 	  uint32_t fwd_o, uint32_t bwd_o);
     };
     
+
+    template<typename Token>
+    string 
+    toString(TokenIndex const& V, Token const* x, size_t const len)
+    {
+      if (!len) return "";
+      UTIL_THROW_IF2(!x, HERE << ": Unexpected end of phrase!");
+      ostringstream buf; 
+      buf << V[x->id()];
+      size_t i = 1;
+      for (x = x->next(); x && i < len; ++i, x = x->next())
+	buf << " " << V[x->id()];
+      UTIL_THROW_IF2(i != len, HERE << ": Unexpected end of phrase!");
+      return buf.str();
+    }
+
+    template<typename Token>
     class 
     PhrasePair
     {
     public:
-      uint64_t p1, p2;
+      class Scorer { public: virtual float operator()(PhrasePair& pp) const = 0; };
+      Token const* start1;
+      Token const* start2;
+      uint32_t len1;
+      uint32_t len2;
+      ::uint64_t p1, p2;
       uint32_t raw1,raw2,sample1,sample2,good1,good2,joint;
       vector<float> fvals;
-      float dfwd[po_other+1];
-      float dbwd[po_other+1];
+      float dfwd[Moses::LRModel::NONE+1]; // distortion counts // counts or probs?
+      float dbwd[Moses::LRModel::NONE+1]; // distortion counts
       vector<uchar> aln;
-      // float    avlex12,avlex21; // average lexical probs (Moses std)
-      // float    znlex1,znlex2;   // zens-ney lexical smoothing
-      // float    colex1,colex2;   // based on raw lexical occurrences
       float score;
-      PhrasePair();
+      bool inverse;
+      PhrasePair() { };
       PhrasePair(PhrasePair const& o);
+
+      PhrasePair const& operator+=(PhrasePair const& other);
+
       bool operator<(PhrasePair const& other) const;
       bool operator>(PhrasePair const& other) const;
-      bool operator<=(PhrasePair const& other) const;
+      bool operator<=(PhrasePair const& other) const; 
       bool operator>=(PhrasePair const& other) const;
 
-      void init(uint64_t const pid1, pstats const& ps,  size_t const numfeats);
-      void init(uint64_t const pid1, pstats const& ps1, pstats const& ps2, 
-		size_t const numfeats);
+      void init();
+      void init(::uint64_t const pid1, bool is_inverse, 
+		Token const* x,   uint32_t const len,
+		pstats const* ps = NULL, size_t const numfeats=0);
+      
+      // void init(::uint64_t const pid1, pstats const& ps,  size_t const numfeats);
+      // void init(::uint64_t const pid1, pstats const& ps1, pstats const& ps2, 
+      // size_t const numfeats);
+
+      // PhrasePair const&
+      // update(::uint64_t const pid2, size_t r2 = 0);
 
       PhrasePair const& 
-      update(uint64_t const pid2, jstats const& js);
+      update(::uint64_t const pid2, Token const* x, 
+	     uint32_t const len, jstats const& js);
+      
+      // PhrasePair const& 
+      // update(::uint64_t const pid2, jstats   const& js1, jstats   const& js2);
 
-      PhrasePair const& 
-      update(uint64_t const pid2, jstats   const& js1, jstats   const& js2);
+      // PhrasePair const& 
+      // update(::uint64_t const pid2, size_t const raw2extra, jstats const& js);
 
-      PhrasePair const& 
-      update(uint64_t const pid2, size_t const raw2extra, jstats const& js);
+      // float 
+      // eval(vector<float> const& w);
 
-      float eval(vector<float> const& w);
+      class SortByTargetIdSeq
+      {
+      public:
+	int cmp(PhrasePair const& a, PhrasePair const& b) const;
+	bool operator()(PhrasePair const& a, PhrasePair const& b) const;
+      };
     };
 
+    template<typename Token>
+    void
+    PhrasePair<Token>::
+    init(::uint64_t const pid1, bool is_inverse, Token const* x, uint32_t const len, 
+	 pstats const* ps, size_t const numfeats)
+    {
+      inverse = is_inverse;
+      start1 = x; len1 = len;
+      p1     = pid1;
+      p2     = 0;
+      if (ps)
+	{
+	  raw1    = ps->raw_cnt;
+	  sample1 = ps->sample_cnt;
+	  good1   = ps->good;
+	}
+      else raw1 = sample1 = good1 = 0;
+      joint   = 0;
+      good2   = 0;
+      sample2 = 0;
+      raw2    = 0;
+      fvals.resize(numfeats);
+    }
+
+    template<typename Token>
+    PhrasePair<Token> const&
+    PhrasePair<Token>::
+    update(::uint64_t const pid2, 
+	   Token const* x, uint32_t const len, jstats const& js)   
+    {
+      p2    = pid2;
+      start2 = x; len2 = len;
+      raw2  = js.cnt2();
+      joint = js.rcnt();
+      assert(js.aln().size());
+      if (js.aln().size()) 
+	aln = js.aln()[0].second;
+      float total_fwd = 0, total_bwd = 0;
+      for (int i = 0; i <= Moses::LRModel::NONE; i++)
+	{
+	  PhraseOrientation po = static_cast<PhraseOrientation>(i);
+	  total_fwd += js.dcnt_fwd(po)+1;
+	  total_bwd += js.dcnt_bwd(po)+1;
+	}
+
+      // should we do that here or leave the raw counts?
+      for (int i = 0; i <= Moses::LRModel::NONE; i++)
+	{
+	  PhraseOrientation po = static_cast<PhraseOrientation>(i);
+	  dfwd[i] = float(js.dcnt_fwd(po)+1)/total_fwd;
+	  dbwd[i] = float(js.dcnt_bwd(po)+1)/total_bwd;
+	}
+      
+      return *this;
+    }
+
+    template<typename Token>
+    bool 
+    PhrasePair<Token>::
+    operator<(PhrasePair const& other) const 
+    { return this->score < other.score; }
+    
+    template<typename Token>
+    bool 
+    PhrasePair<Token>::
+    operator>(PhrasePair const& other) const
+    { return this->score > other.score; }
+
+    template<typename Token>
+    bool 
+    PhrasePair<Token>::
+    operator<=(PhrasePair const& other) const 
+    { return this->score <= other.score; }
+    
+    template<typename Token>
+    bool 
+    PhrasePair<Token>::
+    operator>=(PhrasePair const& other) const
+    { return this->score >= other.score; }
+
+    template<typename Token>
+    PhrasePair<Token> const&
+    PhrasePair<Token>::
+    operator+=(PhrasePair const& o) 
+    { 
+      raw1 += o.raw1;
+      raw2 += o.raw2;
+      sample1 += o.sample1;
+      sample2 += o.sample2;
+      good1 += o.good1;
+      good2 += o.good2;
+      joint += o.joint;
+      return *this;
+    }
+
+    template<typename Token>
+    PhrasePair<Token>::
+    PhrasePair(PhrasePair<Token> const& o) 
+      : start1(o.start1)
+      , start2(o.start2)
+      , len1(o.len1)
+      , len2(o.len2)
+      , p1(o.p1) 
+      , p2(o.p2)
+      , raw1(o.raw1) 
+      , raw2(o.raw2) 
+      , sample1(o.sample1)
+      , sample2(o.sample2)
+      ,	good1(o.good1)
+      , good2(o.good2)
+      , joint(o.joint)
+      , fvals(o.fvals)
+      , aln(o.aln)
+      , score(o.score)
+      , inverse(o.inverse)
+    {
+      for (int i = 0; i <= Moses::LRModel::NONE; ++i)
+	{
+	  dfwd[i] = o.dfwd[i];
+	  dbwd[i] = o.dbwd[i];
+	}
+    }
+    
+    template<typename Token>
+    int
+    PhrasePair<Token>::
+    SortByTargetIdSeq::
+    cmp(PhrasePair const& a, PhrasePair const& b) const
+    {
+      size_t i = 0;
+      Token const* x = a.start2;
+      Token const* y = b.start2;
+      while (i < a.len2 && i < b.len2 && x->id() == y->id()) 
+	{
+	  x = x->next();
+	  y = y->next();
+	  ++i;
+	}
+      if (i == a.len2 && i == b.len2) return 0;
+      if (i == a.len2) return -1;
+      if (i == b.len2) return  1;
+      return x->id() < y->id() ? -1 : 1;
+    }
+    
+    template<typename Token>
+    bool
+    PhrasePair<Token>::
+    SortByTargetIdSeq::
+    operator()(PhrasePair const& a, PhrasePair const& b) const
+    {
+      return this->cmp(a,b) < 0;
+    }
+
+    template<typename Token>
+    void 
+    PhrasePair<Token>::
+    init()
+    {
+      inverse = false;
+      len1 = len2 = raw1 = raw2 = sample1 = sample2 = good1 = good2 = joint = 0;
+      start1 = start2 = NULL;
+      p1 = p2 = 0;
+    }
+
+    class 
+    SamplingBias 
+    {
+    public:
+      virtual float operator[](size_t const ID) const = 0;
+      virtual size_t size() const = 0;
+    };
+
+    class
+    DocumentBias : public SamplingBias
+    {
+      sptr<vector<id_type> const> const m_sid2docid;
+      vector<float> m_bias;
+		   
+    public:
+
+      DocumentBias(sptr<vector<id_type> const> const& sid2doc,
+		   map<string,id_type> const& docname2docid,
+		   map<string,float> const& biasmap)
+	: m_sid2docid(sid2doc)
+      {
+	m_bias.assign(docname2docid.size(),0);
+	map<string, id_type>::const_iterator m;
+	typedef pair<string,float> item;
+	BOOST_FOREACH(item const& x, biasmap)
+	  {
+	    m = docname2docid.find(x.first);
+	    UTIL_THROW_IF2(m == docname2docid.end(),
+			   "Do not know document '" << x.first << "'");
+	    m_bias[m->second] = x.second;
+	  }
+	
+      }
+
+      float 
+      operator[](size_t const idx) const 
+      { 
+	UTIL_THROW_IF2(idx >= m_sid2docid->size(), "Out of bounds");
+	return m_bias[(*m_sid2docid)[idx]];
+      }
+      size_t size() const { return m_sid2docid->size(); }
+    };
+
+    class
+    SentenceBias : public SamplingBias
+    {
+      vector<float> m_bias;
+    public:
+      SentenceBias(vector<float> const& bias) : m_bias(bias) { }
+      SentenceBias(size_t const s) : m_bias(s) { }
+
+      float& operator[](size_t const idx) 
+      {
+	UTIL_THROW_IF2(idx >= m_bias.size(), "Out of bounds");
+	return m_bias[idx];
+      }
+
+      float operator[](size_t const idx) const 
+      { 
+	UTIL_THROW_IF2(idx >= m_bias.size(), "Out of bounds");
+	return m_bias[idx];
+      }
+      size_t size() const { return m_bias.size(); }
+      
+    };
+      
 
     template<typename TKN>
     class Bitext 
@@ -223,6 +487,9 @@ namespace Moses {
       sptr<TokenIndex>     V2; // vocab
       sptr<TSA<Token> >    I1; // indices
       sptr<TSA<Token> >    I2; // indices
+
+      map<string,id_type>  m_docname2docid;
+      sptr<vector<id_type> > m_sid2docid;
       
       /// given the source phrase sid[start:stop]
       //  find the possible start (s1 .. s2) and end (e1 .. e2) 
@@ -239,18 +506,24 @@ namespace Moses {
        bool const flip) const;
       
 #if 1
-      typedef boost::unordered_map<uint64_t,sptr<pstats> > pcache_t;
+      typedef boost::unordered_map<typename ::uint64_t,sptr<pstats> > pcache_t;
 #else
-      typedef map<uint64_t,sptr<pstats> > pcache_t;
+      typedef map<typename ::uint64_t,sptr<pstats> > pcache_t;
 #endif
       mutable pcache_t cache1,cache2;
     protected:
+      typedef typename 
+      lru_cache::LRU_Cache<typename ::uint64_t, vector<PhrasePair<Token> > >  
+      pplist_cache_t;
+
       size_t default_sample_size;
       size_t num_workers;
       size_t m_pstats_cache_threshold;
+      mutable pplist_cache_t m_pplist_cache1, m_pplist_cache2;
     private:
       sptr<pstats> 
-	prep2(iter const& phrase, size_t const max_sample) const;
+      prep2(iter const& phrase, size_t const max_sample,
+	    SamplingBias const* const bias) const;
     public:
       Bitext(size_t const max_sample =1000, 
 	     size_t const xnum_workers =16);
@@ -268,22 +541,64 @@ namespace Moses {
       virtual void open(string const base, string const L1, string const L2) = 0;
       
       // sptr<pstats> lookup(Phrase const& phrase, size_t factor) const;
-      sptr<pstats> lookup(iter const& phrase) const;
-      sptr<pstats> lookup(iter const& phrase, size_t const max_sample) const;
-      void prep(iter const& phrase) const;
+      sptr<pstats> lookup(iter const& phrase, SamplingBias const* const bias=NULL) const;
+      sptr<pstats> lookup(iter const& phrase, size_t const max_sample,
+			  SamplingBias const* const bias) const;
+
+      void
+      lookup(vector<Token> const& snt, TSA<Token>& idx, 
+	     vector<vector<sptr<vector<PhrasePair<Token> > > > >& dest,
+	     vector<vector<typename ::uint64_t> >* pidmap = NULL,
+	     typename PhrasePair<Token>::Scorer* scorer=NULL, 
+	     SamplingBias const* const bias=NULL,
+	     bool multithread=true) const;
+
+      void prep(iter const& phrase, SamplingBias const* const bias) const;
 
       void   setDefaultSampleSize(size_t const max_samples);
       size_t getDefaultSampleSize() const;
 
-      string toString(uint64_t pid, int isL2) const;
+      string toString(::uint64_t pid, int isL2) const;
 
       virtual size_t revision() const { return 0; }
+      
+      sptr<DocumentBias>
+      setupDocumentBias(map<string,float> const& bias) const;
+      
+      sptr<SentenceBias>
+      loadSentenceBias(string const& fname) const;
     };
+
+    template<typename Token>
+    sptr<SentenceBias>
+    Bitext<Token>::
+    loadSentenceBias(string const& fname) const
+    {
+      sptr<SentenceBias> ret(new SentenceBias(T1->size()));
+      ifstream in(fname.c_str());
+      size_t i = 0;
+      float v; while (in>>v) (*ret)[i++] = v;
+      UTIL_THROW_IF2(i != T1->size(),
+		     "Mismatch between bias vector size and corpus size at "
+		     << HERE);
+      return ret;
+    }
+
+    template<typename Token>
+    sptr<DocumentBias>
+    Bitext<Token>::
+    setupDocumentBias(map<string,float> const& bias) const
+    {
+      sptr<DocumentBias> ret(new DocumentBias(m_sid2docid, m_docname2docid,bias));
+      return ret;
+    }
+
+
 
     template<typename Token>
     string
     Bitext<Token>::
-    toString(uint64_t pid, int isL2) const
+    toString(::uint64_t pid, int isL2) const
     {
       ostringstream buf;
       uint32_t sid,off,len; parse_pid(pid,sid,off,len);
@@ -355,7 +670,9 @@ namespace Moses {
       boost::mutex lock; 
       class job 
       {
+#if UG_BITEXT_TRACK_ACTIVE_THREADS
 	static ThreadSafeCounter active;
+#endif
 	boost::mutex lock; 
 	friend class agenda;
 	boost::taus88 rnd;  // every job has its own pseudo random generator 
@@ -373,10 +690,13 @@ namespace Moses {
 	size_t             len; // phrase length
 	bool               fwd; // if true, source phrase is L1 
 	sptr<pstats>     stats; // stores statistics collected during sampling
-	bool step(uint64_t & sid, uint64_t & offset); // select another occurrence
+	SamplingBias const* m_bias; // sentence-level bias for sampling
+	float bias_total;
+	bool step(::uint64_t & sid, ::uint64_t & offset); // select another occurrence
 	bool done() const;
 	job(typename TSA<Token>::tree_iterator const& m, 
-	    sptr<TSA<Token> > const& r, size_t maxsmpl, bool isfwd);
+	    sptr<TSA<Token> > const& r, size_t maxsmpl, bool isfwd, 
+	    SamplingBias const* const bias);
 	~job();
       };
     public:      
@@ -401,7 +721,9 @@ namespace Moses {
 
       sptr<pstats> 
       add_job(typename TSA<Token>::tree_iterator const& phrase, 
-	      size_t const max_samples);
+	      size_t const max_samples, 
+	      SamplingBias const* const bias);
+
       sptr<job> get_job();
     };
     
@@ -410,7 +732,7 @@ namespace Moses {
     Bitext<Token>::
     agenda::
     job::
-    step(uint64_t & sid, uint64_t & offset)
+    step(::uint64_t & sid, ::uint64_t & offset)
     {
       boost::lock_guard<boost::mutex> jguard(lock);
       bool ret = (max_samples == 0) && (next < stop);
@@ -420,6 +742,8 @@ namespace Moses {
 	  next = root->readOffset(next,stop,offset);
 	  boost::lock_guard<boost::mutex> sguard(stats->lock);
 	  if (stats->raw_cnt == ctr) ++stats->raw_cnt;
+	  if (m_bias && (*m_bias)[sid] == 0)
+	    return false;
 	  stats->sample_cnt++;
 	}
       else 
@@ -429,18 +753,28 @@ namespace Moses {
 	    {
 	      next = root->readSid(next,stop,sid);
 	      next = root->readOffset(next,stop,offset);
-	      { // brackets required for lock scoping; see sguard immediately below
+	      { // brackets required for lock scoping; 
+		// see sguard immediately below
 		boost::lock_guard<boost::mutex> sguard(stats->lock); 
 		if (stats->raw_cnt == ctr) ++stats->raw_cnt;
 		size_t scalefac = (stats->raw_cnt - ctr++);
-		size_t rnum = scalefac*(rnd()/(rnd.max()+1.));
+		size_t rnum = scalefac * (rnd()/(rnd.max()+1.));
+		size_t th = (bias_total 
+			     ? ((*m_bias)[sid]/bias_total * m_bias->size() 
+				* max_samples)
+			     : max_samples);
 #if 0
 		cerr << rnum << "/" << scalefac << " vs. " 
 		     << max_samples - stats->good << " ("
 		     << max_samples << " - " << stats->good << ")" 
-		     << endl;
+		     << " th=" << th;
+		if (m_bias) 
+		  cerr << " with bias " << (*m_bias)[sid] 
+		       << " => " << (*m_bias)[sid] * m_bias->size();
+		else cerr << " without bias";
+		cerr << endl;
 #endif
-		if (rnum < max_samples - stats->good)
+		if (rnum + stats->good < th)
 		  {
 		    stats->sample_cnt++;
 		    ret = true;
@@ -503,7 +837,7 @@ namespace Moses {
       // This way, we can reduce the number of lock / unlock operations we need to do during 
       // sampling. 
       size_t s1=0, s2=0, e1=0, e2=0;
-      uint64_t sid=0, offset=0; // of the source phrase
+      ::uint64_t sid=0, offset=0; // of the source phrase
       while(sptr<job> j = ag.get_job())
 	{
 	  j->stats->register_worker();
@@ -512,7 +846,7 @@ namespace Moses {
 	  while (j->step(sid,offset))
 	    {
 	      aln.clear();
-	      int po_fwd=po_other,po_bwd=po_other;
+	      int po_fwd=Moses::LRModel::NONE,po_bwd=Moses::LRModel::NONE;
 	      if (j->fwd)
 		{
 		  if (!ag.bt.find_trg_phr_bounds
@@ -522,7 +856,7 @@ namespace Moses {
 		}
 	      else if (!ag.bt.find_trg_phr_bounds
 		       (sid,offset,offset+j->len,s1,s2,e1,e2,po_fwd,po_bwd,
-			NULL,NULL,true))
+			&aln,NULL,true)) // NULL,NULL,true))
 		continue;
 	      j->stats->lock.lock(); 
 	      j->stats->good += 1; 
@@ -530,10 +864,21 @@ namespace Moses {
 	      ++j->stats->ofwd[po_fwd];
 	      ++j->stats->obwd[po_bwd];
 	      j->stats->lock.unlock();
-	      for (size_t k = j->fwd ? 1 : 0; k < aln.size(); k += 2) 
+	      // for (size_t k = j->fwd ? 1 : 0; k < aln.size(); k += 2) 
+	      for (size_t k = 1; k < aln.size(); k += 2) 
 		aln[k] += s2 - s1;
 	      Token const* o = (j->fwd ? ag.bt.T2 : ag.bt.T1)->sntStart(sid);
 	      float sample_weight = 1./((s2-s1+1)*(e2-e1+1));
+
+	      vector<typename ::uint64_t> seen; 
+	      seen.reserve(100);
+	      // It is possible that the phrase extraction extracts the same
+	      // phrase twice, e.g., when word a co-occurs with sequence b b b
+	      // but is aligned only to the middle word. We can only count
+	      // each phrase pair once per source phrase occurrence, or else
+	      // run the risk of having more joint counts than marginal
+	      // counts.
+
 	      for (size_t s = s1; s <= s2; ++s)
 		{
 		  sptr<iter> b = (j->fwd ? ag.bt.I2 : ag.bt.I1)->find(o+s,e1-s);
@@ -542,7 +887,26 @@ namespace Moses {
 		  // assert(b);
 		  for (size_t i = e1; i <= e2; ++i)
 		    {
-		      if (! j->stats->add(b->getPid(),sample_weight,aln,
+		      ::uint64_t tpid = b->getPid();
+		      size_t s = 0;
+		      while (s < seen.size() && seen[s] != tpid) ++s;
+		      if (s < seen.size())
+			{
+#if 0
+			  size_t sid, off, len;
+			  parse_pid(tpid,sid,off,len);
+			  cerr << "HA, gotcha! " << sid << ":" << off << " at " << HERE << endl;
+			  for (size_t z = 0; z < len; ++z)
+			    {
+			      id_type tid = ag.bt.T2->sntStart(sid)[off+z].id();
+			      cerr << (*ag.bt.V2)[tid] << " "; 
+			    }
+			  cerr << endl;
+#endif
+			  continue;
+			}
+		      seen.push_back(tpid);
+		      if (! j->stats->add(tpid,sample_weight,aln,
 					  b->approxOccurrenceCount(),
 					  po_fwd,po_bwd))
 			{
@@ -573,8 +937,10 @@ namespace Moses {
 #endif 
 			}
 		    }
-		  if (j->fwd && s < s2) 
-		    for (size_t k = j->fwd ? 1 : 0; k < aln.size(); k += 2) 
+		  // if (j->fwd && s < s2) 
+		  // for (size_t k = j->fwd ? 1 : 0; k < aln.size(); k += 2) 
+		  if (s < s2)
+		    for (size_t k = 1; k < aln.size(); k += 2) 
 		      --aln[k];
 		}
 	      // j->stats->lock.unlock();
@@ -590,7 +956,10 @@ namespace Moses {
     ~job()
     {
       if (stats) stats.reset();
-      --active;
+#if UG_BITEXT_TRACK_ACTIVE_THREADS
+      try { --active; } catch (...) {} 
+#endif
+      // counter may not exist any more at destruction time
     }
 
     template<typename Token>
@@ -598,7 +967,8 @@ namespace Moses {
     agenda::
     job::
     job(typename TSA<Token>::tree_iterator const& m, 
-	sptr<TSA<Token> > const& r, size_t maxsmpl, bool isfwd)
+	sptr<TSA<Token> > const& r, size_t maxsmpl, 
+	bool isfwd, SamplingBias const* const sntbias)
       : rnd(0)
       , rnddenom(rnd.max() + 1.)
       , min_diverse(10)
@@ -610,12 +980,29 @@ namespace Moses {
       , ctr(0)
       , len(m.size())
       , fwd(isfwd)
+      , m_bias(sntbias)
     {
       stats.reset(new pstats());
       stats->raw_cnt = m.approxOccurrenceCount();
-      // if (++active%5 == 0) 
+      bias_total = 0; 
+      // we need to renormalize on the fly, as the summ of all sentence probs over 
+      // all candidates (not all sentences in the corpus) needs to add to 1.
+      // Profiling question: how much does that cost us?
+      if (m_bias)
+	{
+	  for (char const* x = m.lower_bound(-1); x < stop;)
+	    {
+	      uint32_t sid; ushort offset;
+	      next = root->readSid(next,stop,sid);
+	      next = root->readOffset(next,stop,offset);
+	      bias_total += (*m_bias)[sid];
+	    }
+	}
+#if UG_BITEXT_TRACK_ACTIVE_THREADS
       ++active;
+      // if (active%5 == 0) 
       // cerr << size_t(active) << " active jobs at " << __FILE__ << ":" << __LINE__ << endl;
+#endif
     }
 
     template<typename Token>
@@ -623,12 +1010,12 @@ namespace Moses {
     Bitext<Token>::
     agenda::
     add_job(typename TSA<Token>::tree_iterator const& phrase, 
-	    size_t const max_samples)
+	    size_t const max_samples, SamplingBias const* const bias)
     {
       boost::unique_lock<boost::mutex> lk(this->lock);
       static boost::posix_time::time_duration nodelay(0,0,0,0); 
       bool fwd = phrase.root == bt.I1.get();
-      sptr<job> j(new job(phrase, fwd ? bt.I1 : bt.I2, max_samples, fwd));
+      sptr<job> j(new job(phrase, fwd ? bt.I1 : bt.I2, max_samples, fwd, bias));
       j->stats->register_worker();
       
       joblist.push_back(j);
@@ -697,6 +1084,7 @@ namespace Moses {
     template<typename TKN>
     class mmBitext : public Bitext<TKN>
     {
+      void load_document_map(string const& fname);
     public:
       void open(string const base, string const L1, string L2);
       mmBitext();
@@ -717,6 +1105,35 @@ namespace Moses {
     template<typename TKN>
     void
     mmBitext<TKN>::
+    load_document_map(string const& fname)
+    {
+	  ifstream docmap(fname.c_str());
+	  // the docmap file should list the documents in the corpus 
+	  // in the order in which they appear with one line per document:
+	  // <docname> <number of lines / sentences>
+	  //
+	  // in the future, we might also allow listing documents with
+	  // sentence ranges.
+	  string buffer,docname; size_t a=0,b;
+	  this->m_sid2docid.reset(new vector<id_type>(this->T1->size()));
+	  while(getline(docmap,buffer))
+	    {
+	      istringstream line(buffer); 
+	      if (!(line>>docname)) continue; // empty line
+	      if (docname.size() && docname[0] == '#') continue; // comment
+	      size_t docid = this->m_docname2docid.size();
+	      this->m_docname2docid[docname] = docid;
+	      line >> b;
+	      for (b += a; a < b; ++a)
+		(*this->m_sid2docid)[a] = docid;
+	    }
+	  UTIL_THROW_IF2(b != this->T1->size(), 
+			 "Document map doesn't match corpus!");
+    }
+
+    template<typename TKN>
+    void
+    mmBitext<TKN>::
     open(string const base, string const L1, string L2)
     {
       mmTtrack<TKN>& t1 = *reinterpret_cast<mmTtrack<TKN>*>(this->T1.get());
@@ -732,6 +1149,10 @@ namespace Moses {
       i1.open(base+L1+".sfa", this->T1);
       i2.open(base+L2+".sfa", this->T2);
       assert(this->T1->size() == this->T2->size());
+
+      string docmapfile = base+".dmp";
+      if (!access(docmapfile.c_str(),F_OK))
+	load_document_map(docmapfile);
     }
 
    
@@ -987,9 +1408,18 @@ namespace Moses {
       assert(T2);
       assert(Tx);
 
-      bitvector forbidden((flip ? T1 : T2)->sntLen(sid));
-      size_t slen1 = (*T1).sntLen(sid);
-      size_t slen2 = (*T2).sntLen(sid);
+      size_t slen1,slen2;
+      if (flip)
+	{
+	  slen1 = T2->sntLen(sid);
+	  slen2 = T1->sntLen(sid);
+	}
+      else
+	{
+	  slen1 = T1->sntLen(sid);
+	  slen2 = T2->sntLen(sid);
+	}
+      bitvector forbidden(slen2);
       if (full_alignment)
 	{
 	  if (slen1*slen2 > full_alignment->size())
@@ -1008,17 +1438,11 @@ namespace Moses {
 	  if (flip) { p = binread(p,trg); assert(p<x); p = binread(p,src); }
 	  else      { p = binread(p,src); assert(p<x); p = binread(p,trg); }
 
-	  // cerr << sid << " " << src << "/" << slen1 << " " << trg << "/" 
-	  // << slen2 << endl;
-	  if (src >= slen1 || trg >= slen2)
-	    {
-	      ostringstream buf;
-	      buf << "Alignment range error at sentence " << sid << "!" << endl
-		  << src << "/" << slen1 << " " << trg << "/" << slen2 << endl;
-	      cerr << buf.str() << endl;
-	      UTIL_THROW(util::Exception, buf.str().c_str());
-	    }
-	      
+	  UTIL_THROW_IF2((src >= slen1 || trg >= slen2),
+			 "Alignment range error at sentence " << sid << "!\n" 
+			 << src << "/" << slen1 << " " << 
+			 trg << "/" << slen2);
+	  
 	  if (src < start || src >= stop) 
 	    forbidden.set(trg);
 	  else
@@ -1028,22 +1452,11 @@ namespace Moses {
 	    }
 	  if (core_alignment) 
 	    {
-	      if (flip) 
-		{
-		  aln1[trg].push_back(src);
-		  aln2[src].push_back(trg);
-		}
-	      else      
-		{
-		  aln1[src].push_back(trg);
-		  aln2[trg].push_back(src);
-		}
+	      aln1[src].push_back(trg);
+	      aln2[trg].push_back(src);
 	    }
 	  if (full_alignment)
-	    {
-	      if (flip) full_alignment->set(trg*slen2 + src);
-	      else      full_alignment->set(src*slen2 + trg);
-	    }
+	    full_alignment->set(src*slen2 + trg);
 	}
       
       for (size_t i = lft; i <= rgt; ++i)
@@ -1057,67 +1470,17 @@ namespace Moses {
       if (core_alignment) 
 	{
 	  core_alignment->clear();
-	  if (flip)
+	  for (size_t i = start; i < stop; ++i)
 	    {
-	      for (size_t i = lft; i <= rgt; ++i)
+	      BOOST_FOREACH(ushort x, aln1[i])
 		{
-		  sort(aln1[i].begin(),aln1[i].end());
-		  BOOST_FOREACH(ushort x, aln1[i])
-		    {
-		      core_alignment->push_back(i-lft);
-		      core_alignment->push_back(x-start);
-		    }
+		  core_alignment->push_back(i-start);
+		  core_alignment->push_back(x-lft);
 		}
 	    }
-	  else
-	    {
-	      for (size_t i = start; i < stop; ++i)
-		{
-		  BOOST_FOREACH(ushort x, aln1[i])
-		    {
-		      core_alignment->push_back(i-start);
-		      core_alignment->push_back(x-lft);
-		    }
-		}
-	    }
-
 	  // now determine fwd and bwd phrase orientation
-	  if (flip) 
-	    {
-	      po_fwd = find_po_fwd(aln2,aln1,start,stop,s1,e2);
-	      po_bwd = find_po_bwd(aln2,aln1,start,stop,s1,e2);
-	    }
-	  else  	  
-	    {
-	      po_fwd = find_po_fwd(aln1,aln2,start,stop,s1,e2);
-	      po_bwd = find_po_bwd(aln1,aln2,start,stop,s1,e2);
-	    }
-#if 0
-	  // if (e1 - s1 > 3)
-	    {
-	      lock_guard<mutex> guard(this->lock);
-	      Token const* t1 = T1->sntStart(sid);
-	      Token const* t2 = T2->sntStart(sid);
-	      cout << "[" << start << ":" << stop << "] => [" 
-		   << s1 << ":" << s2 << ":" 
-		   << e1 << ":" << e2 << "]" << endl;
-	      for (size_t k = start; k < stop; ++k) 
-		cout << k-start << "." << (*V1)[t1[k].id()] << " "; 
-	      cout << endl;
-	      for (size_t k = s1; k < e2;) 
-		{
-		  if (k == s2) cout << "[";
-		  cout << int(k)-int(s2) << "." << (*V2)[t2[k].id()];
-		  if (++k == e1) cout << "] ";
-		  else cout << " ";
-		}
-	      cout << endl;
-	      for (size_t k = 0; k < core_alignment->size(); k += 2)
-		cout << int((*core_alignment)[k]) << "-" << int((*core_alignment)[k+1]) << " ";
-	      cout << "\n" << __FILE__ << ":" << __LINE__ << endl;
-
-	    }
-#endif
+	  po_fwd = find_po_fwd(aln1,aln2,start,stop,s1,e2);
+	  po_bwd = find_po_bwd(aln1,aln2,start,stop,s1,e2);
 	}
       return lft <= rgt;
     }
@@ -1125,15 +1488,16 @@ namespace Moses {
     template<typename Token>
     void
     Bitext<Token>::
-    prep(iter const& phrase) const
+    prep(iter const& phrase, SamplingBias const* const bias) const
     {
-      prep2(phrase, this->default_sample_size);
+      prep2(phrase, this->default_sample_size,bias);
     }
 
     template<typename Token>
     sptr<pstats> 
     Bitext<Token>::
-    prep2(iter const& phrase, size_t const max_sample) const
+    prep2(iter const& phrase, size_t const max_sample, 
+	  SamplingBias const* const bias) const
     {
       boost::lock_guard<boost::mutex> guard(this->lock);
       if (!ag) 
@@ -1145,14 +1509,17 @@ namespace Moses {
       sptr<pstats> ret;
 #if 1
       // use pcache only for plain sentence input
+      // in the long run, we should create a PT clone for every bias 
+      // as part of a document-specific decoder
       if (StaticData::Instance().GetInputType() == SentenceInput && 
-	  max_sample == this->default_sample_size && 
+	  max_sample == this->default_sample_size && bias == NULL && 
 	  phrase.approxOccurrenceCount() > m_pstats_cache_threshold)
       	{
-	  // need to test what a good caching threshold is
+	  // still need to test what a good caching threshold is
 	  // is caching here the cause of the apparent memory leak in 
-	  // confusion network decoding ????
-	  uint64_t pid = phrase.getPid();
+	  // confusion network decoding ???? No, it isn't. 
+	  // That was because of naive, brute-force input path generation.
+	  ::uint64_t pid = phrase.getPid();
 	  pcache_t & cache(phrase.root == &(*this->I1) ? cache1 : cache2);
 	  pcache_t::value_type entry(pid,sptr<pstats>());
 	  pair<pcache_t::iterator,bool> foo;
@@ -1162,7 +1529,7 @@ namespace Moses {
 	      // cerr << "NEW FREQUENT PHRASE: "
 	      // << phrase.str(V1.get()) << " " << phrase.approxOccurrenceCount()  
 	      // << " at " << __FILE__ << ":" << __LINE__ << endl;
-	      foo.first->second = ag->add_job(phrase, max_sample);
+	      foo.first->second = ag->add_job(phrase, max_sample,NULL);
 	      assert(foo.first->second);
 	    }
 	  assert(foo.first->second);
@@ -1171,17 +1538,135 @@ namespace Moses {
 	}
       else 
 #endif
-	ret = ag->add_job(phrase, max_sample);
+	ret = ag->add_job(phrase, max_sample,bias);
       assert(ret);
       return ret;
+    }
+
+    // worker for scoring and sorting phrase table entries in parallel
+    template<typename Token>
+    class pstats2pplist
+    {
+      Ttrack<Token> const& m_other;
+      sptr<pstats> m_pstats;
+      vector<PhrasePair<Token> >& m_pplist;
+      typename PhrasePair<Token>::Scorer const* m_scorer;
+      PhrasePair<Token> m_pp;
+      Token const* m_token;
+      size_t m_len;
+      ::uint64_t m_pid1;
+      bool m_is_inverse;
+    public:
+
+      // CONSTRUCTOR
+      pstats2pplist(typename TSA<Token>::tree_iterator const& m,
+		    Ttrack<Token> const& other,
+		    sptr<pstats> const& ps, 
+		    vector<PhrasePair<Token> >& dest, 
+		    typename PhrasePair<Token>::Scorer const* scorer)
+	: m_other(other)
+	, m_pstats(ps)
+	, m_pplist(dest)
+	, m_scorer(scorer)
+	, m_token(m.getToken(0))
+	, m_len(m.size())
+	, m_pid1(m.getPid())
+	, m_is_inverse(false)
+      { }
+      
+      // WORKER
+      void 
+      operator()() 
+      {
+	// wait till all statistics have been collected
+	boost::unique_lock<boost::mutex> lock(m_pstats->lock);
+	while (m_pstats->in_progress)
+	  m_pstats->ready.wait(lock);
+
+	m_pp.init(m_pid1, m_is_inverse, m_token,m_len,m_pstats.get(),0); 
+
+	// convert pstats entries to phrase pairs
+	pstats::trg_map_t::iterator a;
+	for (a = m_pstats->trg.begin(); a != m_pstats->trg.end(); ++a)
+	  {
+	    uint32_t sid,off,len;
+	    parse_pid(a->first, sid, off, len);
+	    m_pp.update(a->first, m_other.sntStart(sid)+off, len, a->second);
+	    m_pp.good2 = max(uint32_t(m_pp.raw2 * float(m_pp.good1)/m_pp.raw1),m_pp.joint);
+	    size_t J = m_pp.joint<<7; // hard coded threshold of 1/128
+	    if (m_pp.good1 > J || m_pp.good2 > J) continue; 
+	    if (m_scorer) 
+	      {
+		(*m_scorer)(m_pp);
+	      }
+	    m_pplist.push_back(m_pp);
+	  }
+	greater<PhrasePair<Token> > sorter;
+	if (m_scorer) sort(m_pplist.begin(), m_pplist.end(),sorter);
+      }
+    };
+    
+    template<typename Token>
+    void
+    Bitext<Token>::
+    lookup(vector<Token> const& snt, TSA<Token>& idx, 
+	   vector<vector<sptr<vector<PhrasePair<Token> > > > >& dest,
+	   vector<vector<typename ::uint64_t> >* pidmap,
+	   typename PhrasePair<Token>::Scorer* scorer,
+	   SamplingBias const* const bias, bool multithread) const
+    {
+      // typedef vector<vector<sptr<vector<PhrasePair<Token> > > > > ret_t;
+      
+      dest.clear(); 
+      dest.resize(snt.size());
+      if (pidmap) { pidmap->clear(); pidmap->resize(snt.size()); }
+
+      // collect statistics in parallel, then build PT entries as 
+      // the sampling finishes
+      bool fwd = &idx == I1.get();
+      vector<boost::thread*> workers; // background threads doing the lookup
+      pplist_cache_t& C = (fwd ? m_pplist_cache1 : m_pplist_cache2);
+      if (C.capacity() < 100000) C.reserve(100000);
+      for (size_t i = 0; i < snt.size(); ++i)
+	{
+	  dest[i].reserve(snt.size()-i);
+	  typename TSA<Token>::tree_iterator m(&idx);
+	  for (size_t k = i; k < snt.size() && m.extend(snt[k].id()); ++k)
+	    {
+	      ::uint64_t key = m.getPid();
+	      if (pidmap) (*pidmap)[i].push_back(key);
+	      sptr<vector<PhrasePair<Token> > > pp = C.get(key);
+	      if (pp) 
+		dest[i].push_back(pp);
+	      else 
+		{
+		  pp.reset(new vector<PhrasePair<Token> >());
+		  C.set(key,pp);
+		  dest[i].push_back(pp);
+		  sptr<pstats> x = prep2(m, this->default_sample_size,bias);
+		  pstats2pplist<Token> w(m,*(fwd?T2:T1),x,*pp,scorer);
+		  if (multithread) 
+		    {
+		      boost::thread* t = new boost::thread(w);
+		      workers.push_back(t);
+		    }
+		  else w();
+		}
+	    }
+	}
+      for (size_t w = 0; w < workers.size(); ++w) 
+	{
+	  workers[w]->join(); 
+	  delete workers[w];
+	}
     }
 
     template<typename Token>
     sptr<pstats> 
     Bitext<Token>::
-    lookup(iter const& phrase) const
+    lookup(iter const& phrase, SamplingBias const* const bias) const
     {
-      sptr<pstats> ret = prep2(phrase, this->default_sample_size);
+      sptr<pstats> ret = prep2(phrase, this->default_sample_size, bias);
       assert(ret);
       boost::lock_guard<boost::mutex> guard(this->lock);
       if (this->num_workers <= 1)
@@ -1198,7 +1683,8 @@ namespace Moses {
     template<typename Token>
     sptr<pstats> 
     Bitext<Token>::
-    lookup(iter const& phrase, size_t const max_sample) const
+    lookup(iter const& phrase, size_t const max_sample,
+	   SamplingBias const* const bias) const
     {
       sptr<pstats> ret = prep2(phrase, max_sample);
       boost::lock_guard<boost::mutex> guard(this->lock);
@@ -1242,12 +1728,44 @@ namespace Moses {
       return (max_samples && stats->good >= max_samples) || next == stop; 
     }
 
+#if UG_BITEXT_TRACK_ACTIVE_THREADS
     template<typename TKN>
     ThreadSafeCounter 
     Bitext<TKN>::
     agenda::
     job::active;
+#endif
 
+    template<typename Token>
+    void 
+    expand(typename Bitext<Token>::iter const& m, 
+	   Bitext<Token> const& bt, 
+	   pstats const& ps, vector<PhrasePair<Token> >& dest)
+    {
+      bool fwd = m.root == bt.I1.get();
+      dest.reserve(ps.trg.size());
+      PhrasePair<Token> pp;
+      pp.init(m.getPid(), !fwd, m.getToken(0), m.size(), &ps, 0);
+      // cout << HERE << " " << toString(*(fwd ? bt.V1 : bt.V2), pp.start1,pp.len1) << endl;
+      pstats::trg_map_t::const_iterator a;
+      for (a = ps.trg.begin(); a != ps.trg.end(); ++a)
+	{
+	  uint32_t sid,off,len;
+	  parse_pid(a->first, sid, off, len);
+	  pp.update(a->first, (fwd ? bt.T2 : bt.T1)->sntStart(sid)+off, 
+		    len, a->second);
+	  dest.push_back(pp);
+	}
+#if 0
+      typename PhrasePair<Token>::SortByTargetIdSeq sorter;
+      sort(dest.begin(), dest.end(),sorter);
+      BOOST_FOREACH(PhrasePair<Token> const& p, dest)
+	cout << toString (*(fwd ? bt.V1 : bt.V2),p.start1,p.len1) << " ::: " 
+	     << toString (*(fwd ? bt.V2 : bt.V1),p.start2,p.len2) << " " 
+	     << p.joint << endl;
+#endif
+    }
+    
   } // end of namespace bitext
 } // end of namespace moses
 #endif

@@ -64,9 +64,9 @@ const FFState* TargetBigramFeature::EmptyHypothesisState(const InputType &/*inpu
   return new TargetBigramState(m_bos);
 }
 
-FFState* TargetBigramFeature::Evaluate(const Hypothesis& cur_hypo,
-                                       const FFState* prev_state,
-                                       ScoreComponentCollection* accumulator) const
+FFState* TargetBigramFeature::EvaluateWhenApplied(const Hypothesis& cur_hypo,
+    const FFState* prev_state,
+    ScoreComponentCollection* accumulator) const
 {
   const TargetBigramState* tbState = dynamic_cast<const TargetBigramState*>(prev_state);
   assert(tbState);

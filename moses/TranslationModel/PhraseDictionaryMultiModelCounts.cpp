@@ -31,7 +31,7 @@ void OutputVec(const vector<T> &vec)
 }
 
 // from phrase-extract/tables-core.cpp
-vector<string> tokenize( const char* input )
+inline vector<string> tokenize( const char* input )
 {
   vector< string > token;
   bool betweenWords = true;
@@ -65,7 +65,7 @@ PhraseDictionaryMultiModelCounts::PhraseDictionaryMultiModelCounts(const std::st
   ReadParameters();
 
   UTIL_THROW_IF2(m_targetTable.size() != m_pdStr.size(),
-		  "List of phrase tables and target tables must be equal");
+                 "List of phrase tables and target tables must be equal");
 
 }
 
@@ -85,11 +85,11 @@ void PhraseDictionaryMultiModelCounts::SetParameter(const std::string& key, cons
   } else if (key == "lex-e2f") {
     m_lexE2FStr = Tokenize(value, ",");
     UTIL_THROW_IF2(m_lexE2FStr.size() != m_pdStr.size(),
-    		"Number of scores for lexical probability p(f|e) incorrectly specified");
+                   "Number of scores for lexical probability p(f|e) incorrectly specified");
   } else if (key == "lex-f2e") {
     m_lexF2EStr = Tokenize(value, ",");
     UTIL_THROW_IF2(m_lexF2EStr.size() != m_pdStr.size(),
-    		"Number of scores for lexical probability p(e|f) incorrectly specified");
+                   "Number of scores for lexical probability p(e|f) incorrectly specified");
   } else if (key == "target-table") {
     m_targetTable = Tokenize(value, ",");
   } else {
@@ -115,14 +115,14 @@ void PhraseDictionaryMultiModelCounts::Load()
     PhraseDictionary *pt;
     pt = FindPhraseDictionary(ptName);
     UTIL_THROW_IF2(pt == NULL,
-    		"Could not find component phrase table " << ptName);
+                   "Could not find component phrase table " << ptName);
     m_pd.push_back(pt);
 
     // reverse
     const string &target_table = m_targetTable[i];
     pt = FindPhraseDictionary(target_table);
     UTIL_THROW_IF2(pt == NULL,
-    		"Could not find component phrase table " << target_table);
+                   "Could not find component phrase table " << target_table);
     m_inverse_pd.push_back(pt);
 
     // lex
@@ -189,7 +189,7 @@ void PhraseDictionaryMultiModelCounts::CollectSufficientStatistics(const Phrase&
           vector<FeatureFunction*> pd_feature;
           pd_feature.push_back(m_pd[i]);
           const vector<FeatureFunction*> pd_feature_const(pd_feature);
-          statistics->targetPhrase->Evaluate(src, pd_feature_const);
+          statistics->targetPhrase->EvaluateInIsolation(src, pd_feature_const);
           // zero out scores from original phrase table
           statistics->targetPhrase->GetScoreBreakdown().ZeroDenseFeatures(&pd);
 
@@ -251,7 +251,7 @@ TargetPhraseCollection* PhraseDictionaryMultiModelCounts::CreateTargetPhraseColl
       vector<FeatureFunction*> pd_feature;
       pd_feature.push_back(const_cast<PhraseDictionaryMultiModelCounts*>(this));
       const vector<FeatureFunction*> pd_feature_const(pd_feature);
-      statistics->targetPhrase->Evaluate(src, pd_feature_const);
+      statistics->targetPhrase->EvaluateInIsolation(src, pd_feature_const);
     } catch (AlignmentException& e) {
       continue;
     }

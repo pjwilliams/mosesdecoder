@@ -18,8 +18,6 @@
 ***********************************************************************/
 
 #pragma once
-#ifndef EXTRACT_GHKM_OPTIONS_H_
-#define EXTRACT_GHKM_OPTIONS_H_
 
 #include <string>
 
@@ -34,18 +32,25 @@ public:
     : allowUnary(false)
     , conditionOnTargetLhs(false)
     , gzOutput(false)
+    , includeSentenceId(false)
     , maxNodes(15)
     , maxRuleDepth(3)
     , maxRuleSize(3)
     , maxScope(3)
     , minimal(false)
+    , partsOfSpeech(false)
+    , partsOfSpeechFactor(false)
     , pcfg(false)
-    , treeFragments(false)
-    , sourceLabels(false)
+    , phraseOrientation(false)
     , sentenceOffset(0)
-    , unpairedExtractFormat(false)
+    , sourceLabels(false)
+    , stripBitParLabels(false)
+    , stsg(false)
+    , t2s(false)
+    , treeFragments(false)
     , unknownWordMinRelFreq(0.03f)
-    , unknownWordUniform(false) {}
+    , unknownWordUniform(false)
+    , unpairedExtractFormat(false) {}
 
   // Positional options
   std::string targetFile;
@@ -58,26 +63,32 @@ public:
   bool conditionOnTargetLhs;
   std::string glueGrammarFile;
   bool gzOutput;
+  bool includeSentenceId;
   int maxNodes;
   int maxRuleDepth;
   int maxRuleSize;
   int maxScope;
   bool minimal;
+  bool partsOfSpeech;
+  bool partsOfSpeechFactor;
   bool pcfg;
-  bool treeFragments;
+  bool phraseOrientation;
+  int sentenceOffset;
   bool sourceLabels;
   std::string sourceLabelSetFile;
-  int sentenceOffset;
-  std::string targetIndicesFile;
-  bool unpairedExtractFormat;
-  std::string targetUnknownWordFile;
   std::string sourceUnknownWordFile;
-  std::string unknownWordSoftMatchesFile;
+  bool stripBitParLabels;
+  bool stsg;
+  bool t2s;
+  std::string targetIndicesFile;
+  std::string targetUnknownWordFile;
+  bool treeFragments;
   float unknownWordMinRelFreq;
+  std::string unknownWordSoftMatchesFile;
   bool unknownWordUniform;
+  bool unpairedExtractFormat;
 };
 
 }  // namespace GHKM
 }  // namespace Moses
 
-#endif

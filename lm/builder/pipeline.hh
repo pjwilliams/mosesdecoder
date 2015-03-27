@@ -1,6 +1,7 @@
 #ifndef LM_BUILDER_PIPELINE_H
 #define LM_BUILDER_PIPELINE_H
 
+#include "lm/builder/adjust_counts.hh"
 #include "lm/builder/initial_probabilities.hh"
 #include "lm/builder/header_info.hh"
 #include "lm/lm_exception.hh"
@@ -13,13 +14,14 @@
 
 namespace lm { namespace builder {
 
+class Output;
+
 struct PipelineConfig {
   std::size_t order;
   std::string vocab_file;
   util::stream::SortConfig sort;
   InitialProbabilitiesConfig initial_probs;
   util::stream::ChainConfig read_backoffs;
-  bool verbose_header;
 
   // Estimated vocabulary size.  Used for sizing CorpusCount memory and
   // initial probing hash table sizing, also in CorpusCount.
@@ -34,6 +36,14 @@ struct PipelineConfig {
   // n-gram count thresholds for pruning. 0 values means no pruning for
   // corresponding n-gram order
   std::vector<uint64_t> prune_thresholds; //mjd
+  bool prune_vocab;
+  std::string prune_vocab_file;
+
+  // What to do with discount failures.
+  DiscountConfig discount;
+
+  // Compute collapsed q values instead of probability and backoff
+  bool output_q;
   
   /* Computing the perplexity of LMs with different vocabularies is hard.  For
    * example, the lowest perplexity is attained by a unigram model that
@@ -58,7 +68,7 @@ struct PipelineConfig {
 };
 
 // Takes ownership of text_file and out_arpa.
-void Pipeline(PipelineConfig config, int text_file, int out_arpa);
+void Pipeline(PipelineConfig &config, int text_file, Output &output);
 
 }} // namespaces
 #endif // LM_BUILDER_PIPELINE_H

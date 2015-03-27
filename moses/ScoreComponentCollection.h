@@ -49,11 +49,11 @@ struct ScorePair {
   std::vector<float> denseScores;
   std::map<StringPiece, float> sparseScores;
 
-  ScorePair()
-  {}
+  ScorePair() {
+  }
   ScorePair(const std::vector<float> &other)
-    :denseScores(other)
-  {}
+    :denseScores(other) {
+  }
 
   void PlusEquals(const ScorePair &other);
   void PlusEquals(const StringPiece &key, float value);
@@ -106,9 +106,9 @@ public:
     if (indexIter == s_scoreIndexes.end()) {
       std::stringstream strme;
       strme << "ERROR: FeatureFunction: " << sp->GetScoreProducerDescription() <<
-                " not registered with ScoreIndexMap" << std::endl;
+            " not registered with ScoreIndexMap" << std::endl;
       strme << "You must call ScoreComponentCollection.RegisterScoreProducer() " <<
-                " for every FeatureFunction" << std::endl;
+            " for every FeatureFunction" << std::endl;
       UTIL_THROW2(strme.str());
     }
     return indexIter->second;
@@ -200,6 +200,11 @@ public:
     m_scores.sparsePlusEquals(rhs.m_scores);
   }
 
+  // add only core features
+  void CorePlusEquals(const ScoreComponentCollection& rhs) {
+    m_scores.corePlusEquals(rhs.m_scores);
+  }
+
   void PlusEquals(const FVector& scores) {
     m_scores += scores;
   }
@@ -237,7 +242,7 @@ public:
   void PlusEquals(const FeatureFunction* sp, const std::vector<float>& scores) {
     IndexPair indexes = GetIndexes(sp);
     UTIL_THROW_IF2(scores.size() != indexes.second - indexes.first,
-    		"Number of scores is incorrect");
+                   "Number of scores is incorrect");
     for (size_t i = 0; i < scores.size(); ++i) {
       m_scores[i + indexes.first] += scores[i];
     }
@@ -249,7 +254,7 @@ public:
   void PlusEquals(const FeatureFunction* sp, float score) {
     IndexPair indexes = GetIndexes(sp);
     UTIL_THROW_IF2(1 != indexes.second - indexes.first,
-    		"Number of scores is incorrect");
+                   "Number of scores is incorrect");
     m_scores[indexes.first] += score;
   }
 
@@ -261,9 +266,18 @@ public:
 
   void PlusEquals(const FeatureFunction* sp, const ScorePair &scorePair);
 
+  // Add score by index
+  void PlusEquals(size_t index, float score) {
+    m_scores[index] += score;
+  }
+
   //For features which have an unbounded number of components
   void SparsePlusEquals(const std::string& full_name, float score) {
     FName fname(full_name);
+    m_scores[fname] += score;
+  }
+
+  void SparsePlusEquals(const FName& fname, float score) {
     m_scores[fname] += score;
   }
 
@@ -275,11 +289,11 @@ public:
   void Assign(const FeatureFunction* sp, float score) {
     IndexPair indexes = GetIndexes(sp);
     UTIL_THROW_IF2(1 != indexes.second - indexes.first,
-    		"Feature function must must only contain 1 score");
+                   "Feature function must must only contain 1 score");
     m_scores[indexes.first] = score;
   }
 
-  // Assign core weight by index
+  // Assign score by index
   void Assign(size_t index, float score) {
     m_scores[index] = score;
   }
@@ -306,7 +320,7 @@ public:
   float PartialInnerProduct(const FeatureFunction* sp, const std::vector<float>& rhs) const {
     std::vector<float> lhs = GetScoresForProducer(sp);
     UTIL_THROW_IF2(lhs.size() != rhs.size(),
-    		"Number of weights must match number of scores");
+                   "Number of weights must match number of scores");
     return std::inner_product(lhs.begin(), lhs.end(), rhs.begin(), 0.0f);
   }
 
@@ -350,12 +364,17 @@ public:
     m_scores.capMin(minValue);
   }
 
+  std::pair<size_t,size_t> GetIndexesForProducer(const FeatureFunction* sp) const {
+    IndexPair indexPair = GetIndexes(sp);
+    return indexPair;
+  }
+
   //! if a FeatureFunction produces a single score (for example, a language model score)
   //! this will return it.  If not, this method will throw
   float GetScoreForProducer(const FeatureFunction* sp) const {
     IndexPair indexes = GetIndexes(sp);
     UTIL_THROW_IF2(indexes.second - indexes.first != 1,
-    		"Feature function must must only contain 1 score");
+                   "Feature function must must only contain 1 score");
     return m_scores[indexes.first];
   }
 
@@ -379,7 +398,7 @@ public:
   size_t SparseL1Regularize(float lambda);
   void SparseL2Regularize(float lambda);
   void Save(const std::string& filename) const;
-  void Save(std::ostream&) const;
+  void Save(std::ostream&, bool multiline=true) const;
 
   void IncrementSparseHopeFeatures() {
     m_scores.incrementSparseHopeFeatures();
@@ -414,6 +433,11 @@ public:
   void Merge(const ScoreComponentCollection &other) {
     m_scores.merge(other.m_scores);
   }
+
+  void OutputAllFeatureScores(std::ostream &out) const;
+  void OutputFeatureScores( std::ostream& out
+                            , const Moses::FeatureFunction *ff
+                            , std::string &lastName ) const;
 
 #ifdef MPI_ENABLE
 public:

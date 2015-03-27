@@ -1,3 +1,4 @@
+// -*- c++ -*-
 // $Id$
 
 /***********************************************************************
@@ -28,14 +29,16 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include "Phrase.h"
 #include "ScoreComponentCollection.h"
 #include "AlignmentInfo.h"
+#include "AlignmentInfoCollection.h"
 #include "moses/PP/PhraseProperty.h"
 #include "util/string_piece.hh"
 
-#include <boost/shared_ptr.hpp>
 #include <boost/bind.hpp>
 #include <boost/ref.hpp>
+#include <boost/shared_ptr.hpp>
 #include <boost/thread/locks.hpp>
 #include <boost/thread/shared_mutex.hpp>
+#include <boost/unordered_map.hpp>
 
 #include "moses/TranslationModel/ConstraintModel/CSParamPair.h"
 #include "moses/TranslationModel/ConstraintModel/Model.h"
@@ -52,11 +55,24 @@ namespace Moses
 {
 class FeatureFunction;
 class InputPath;
+class InputPath;
+class PhraseDictionary;
 
 /** represents an entry on the target side of a phrase table (scores, translation, alignment)
  */
 class TargetPhrase: public Phrase
 {
+ public:
+  typedef std::map<FeatureFunction const*, boost::shared_ptr<Scores> > 
+    ScoreCache_t;
+  ScoreCache_t const& GetExtraScores() const;
+  Scores const* GetExtraScores(FeatureFunction const* ff) const;
+  void SetExtraScores(FeatureFunction const* ff, 
+		      boost::shared_ptr<Scores> const& scores);
+  
+ private:
+  ScoreCache_t m_cached_scores; 
+  
 private:
   friend std::ostream& operator<<(std::ostream&, const TargetPhrase&);
   friend void swap(TargetPhrase &first, TargetPhrase &second);
@@ -88,23 +104,28 @@ private:
   boost::shared_ptr<const std::vector<const CM::CSParamPair *> > m_constraintSets;
   boost::shared_ptr<const taco::FeatureSelectionRule> m_featureSelectionRule;
   mutable GuardedPartialFSVec m_partialFSVec;
+  const PhraseDictionary *m_container;
+
+  mutable boost::unordered_map<const std::string, boost::shared_ptr<void> > m_data;
 
 public:
-  TargetPhrase();
+  TargetPhrase(const PhraseDictionary *pt = NULL);
+  TargetPhrase(std::string out_string, const PhraseDictionary *pt = NULL);
   TargetPhrase(const TargetPhrase &copy);
-  explicit TargetPhrase(std::string out_string);
-  explicit TargetPhrase(const Phrase &targetPhrase);
+  explicit TargetPhrase(const Phrase &targetPhrase, const PhraseDictionary *pt);
   ~TargetPhrase();
 
   // 1st evaluate method. Called during loading of phrase table.
-  void Evaluate(const Phrase &source, const std::vector<FeatureFunction*> &ffs);
+  void EvaluateInIsolation(const Phrase &source, const std::vector<FeatureFunction*> &ffs);
 
   // as above, score with ALL FFs
   // Used only for OOV processing. Doesn't have a phrase table connect with it
-  void Evaluate(const Phrase &source);
+  void EvaluateInIsolation(const Phrase &source);
 
   // 'inputPath' is guaranteed to be the raw substring from the input. No factors were added or taken away
-  void Evaluate(const InputType &input, const InputPath &inputPath);
+  void EvaluateWithSourceContext(const InputType &input, const InputPath &inputPath);
+
+  void UpdateScore(ScoreComponentCollection *futureScoreBreakdown = NULL);
 
   void SetSparseScore(const FeatureFunction* translationScoreProducer, const StringPiece &sparseString);
 
@@ -132,6 +153,15 @@ public:
     return m_scoreBreakdown;
   }
 
+  /*
+    //TODO: Probably shouldn't copy this, but otherwise ownership is unclear
+    void SetSourcePhrase(const Phrase&  p) {
+      m_sourcePhrase=p;
+    }
+    const Phrase& GetSourcePhrase() const {
+      return m_sourcePhrase;
+    }
+  */
   void SetTargetLHS(const Word *lhs) {
     m_lhsTarget = lhs;
   }
@@ -147,8 +177,22 @@ public:
     m_alignNonTerm = alignNonTerm;
   }
 
-  void SetAlignTerm(const AlignmentInfo::CollType &coll);
-  void SetAlignNonTerm(const AlignmentInfo::CollType &coll);
+  // ALNREP = alignment representation,
+  // see AlignmentInfo constructors for supported representations
+  template<typename ALNREP>
+  void
+  SetAlignTerm(const ALNREP &coll) {
+    m_alignTerm = AlignmentInfoCollection::Instance().Add(coll);
+  }
+
+  // ALNREP = alignment representation,
+  // see AlignmentInfo constructors for supported representations
+  template<typename ALNREP>
+  void
+  SetAlignNonTerm(const ALNREP &coll) {
+    m_alignNonTerm = AlignmentInfoCollection::Instance().Add(coll);
+  }
+
 
   const AlignmentInfo &GetAlignTerm() const {
     return *m_alignTerm;
@@ -193,6 +237,29 @@ public:
   const taco::FeatureSelectionRule *GetFeatureSelectionRule() const {
     return m_featureSelectionRule.get();
   }
+
+  const PhraseDictionary *GetContainer() const {
+    return m_container;
+  }
+
+  bool SetData(const std::string& key, boost::shared_ptr<void> value) const {
+    std::pair< boost::unordered_map<const std::string, boost::shared_ptr<void> >::iterator, bool > inserted =
+      m_data.insert( std::pair<const std::string, boost::shared_ptr<void> >(key,value) );
+    if (!inserted.second) {
+      return false;
+    }
+    return true;
+  }
+
+  boost::shared_ptr<void> GetData(const std::string& key) const {
+    boost::unordered_map<const std::string, boost::shared_ptr<void> >::const_iterator found = m_data.find(key);
+    if (found == m_data.end()) {
+      return boost::shared_ptr<void>();
+    }
+    return found->second;
+  }
+
+  
 
   // To be set by the FF that needs it, by default the rule source = NULL
   // make a copy of the source side of the rule

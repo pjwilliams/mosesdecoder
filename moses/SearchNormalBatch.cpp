@@ -40,7 +40,7 @@ SearchNormalBatch::~SearchNormalBatch()
  * Main decoder loop that translates a sentence by expanding
  * hypotheses stack by stack, until the end of the sentence.
  */
-void SearchNormalBatch::ProcessSentence()
+void SearchNormalBatch::Decode()
 {
   const StaticData &staticData = StaticData::Instance();
   SentenceStats &stats = m_manager.GetSentenceStats();
@@ -140,7 +140,7 @@ ExpandHypothesis(const Hypothesis &hypothesis,
     }
     m_partial_hypos.push_back(newHypo);
   } else {
-	UTIL_THROW2("can't use early discarding with batch decoding!");
+    UTIL_THROW2("can't use early discarding with batch decoding!");
   }
 }
 
@@ -159,13 +159,13 @@ void SearchNormalBatch::EvalAndMergePartialHypos()
          ++sfff_iter) {
       const StatefulFeatureFunction &ff = *(sfff_iter->second);
       int state_idx = sfff_iter->first;
-      hypo->EvaluateWith(ff, state_idx);
+      hypo->EvaluateWhenApplied(ff, state_idx);
     }
     std::vector<const StatelessFeatureFunction*>::iterator slff_iter;
     for (slff_iter = m_stateless_ffs.begin();
          slff_iter != m_stateless_ffs.end();
          ++slff_iter) {
-      hypo->EvaluateWith(**slff_iter);
+      hypo->EvaluateWhenApplied(**slff_iter);
     }
   }
 
@@ -190,7 +190,7 @@ void SearchNormalBatch::EvalAndMergePartialHypos()
          dlm_iter != m_dlm_ffs.end();
          ++dlm_iter) {
       LanguageModel &lm = *(dlm_iter->second);
-      hypo->EvaluateWith(lm, (*dlm_iter).first);
+      hypo->EvaluateWhenApplied(lm, (*dlm_iter).first);
     }
 
     // Put completed hypothesis onto its stack.

@@ -7,6 +7,9 @@
 #include "moses/Manager.h"
 #include "moses/TranslationOption.h"
 #include "moses/Util.h"
+#include "moses/FF/DistortionScoreProducer.h"
+
+#include <boost/foreach.hpp>
 
 using namespace std;
 
@@ -34,11 +37,34 @@ void FeatureFunction::Destroy()
   RemoveAllInColl(s_staticColl);
 }
 
+// The original declaration as 
+// void FeatureFunction::CallChangeSource(InputType *&input)
+// had me a bit perplexed. Would you really want to allow 
+// any feature function to replace the InputType behind the 
+// back of the others? And change what the vector is pointing to?
+
+void FeatureFunction::CallChangeSource(InputType * const&input)
+{
+  for (size_t i = 0; i < s_staticColl.size(); ++i) {
+    const FeatureFunction &ff = *s_staticColl[i];
+    ff.ChangeSource(input);
+  }
+}
+
+void FeatureFunction::SetupAll(TranslationTask const& ttask)
+{
+  BOOST_FOREACH(FeatureFunction* ff, s_staticColl)
+    ff->Setup(ttask);
+}
+
 FeatureFunction::
 FeatureFunction(const std::string& line)
   : m_tuneable(true)
+  , m_requireSortingAfterSourceContext(false)
+  , m_verbosity(std::numeric_limits<std::size_t>::max())
   , m_numScoreComponents(1)
 {
+  m_numTuneableComponents = m_numScoreComponents;
   Initialize(line);
 }
 
@@ -46,8 +72,11 @@ FeatureFunction::
 FeatureFunction(size_t numScoreComponents,
                 const std::string& line)
   : m_tuneable(true)
+  , m_requireSortingAfterSourceContext(false)
+  , m_verbosity(std::numeric_limits<std::size_t>::max())
   , m_numScoreComponents(numScoreComponents)
 {
+  m_numTuneableComponents = m_numScoreComponents;
   Initialize(line);
 }
 
@@ -75,13 +104,14 @@ void FeatureFunction::ParseLine(const std::string &line)
   for (size_t i = 1; i < toks.size(); ++i) {
     vector<string> args = TokenizeFirstOnly(toks[i], "=");
     UTIL_THROW_IF2(args.size() != 2,
-    		"Incorrect format for feature function arg: " << toks[i]);
+                   "Incorrect format for feature function arg: " << toks[i]);
 
     pair<set<string>::iterator,bool> ret = keys.insert(args[0]);
     UTIL_THROW_IF2(!ret.second, "Duplicate key in line " << line);
 
     if (args[0] == "num-features") {
       m_numScoreComponents = Scan<size_t>(args[1]);
+      m_numTuneableComponents = m_numScoreComponents;
     } else if (args[0] == "name") {
       m_description = args[1];
     } else {
@@ -107,9 +137,17 @@ void FeatureFunction::SetParameter(const std::string& key, const std::string& va
 {
   if (key == "tuneable") {
     m_tuneable = Scan<bool>(value);
+  } else if (key == "tuneable-components") {
+    UTIL_THROW_IF2(!m_tuneable, GetScoreProducerDescription()
+                   << ": tuneable-components cannot be set if tuneable=false");
+    SetTuneableComponents(value);
+  } else if (key == "require-sorting-after-source-context") {
+    m_requireSortingAfterSourceContext = Scan<bool>(value);
+  } else if (key == "verbosity") {
+    m_verbosity = Scan<size_t>(value);
   } else if (key == "filterable") { //ignore
   } else {
-    UTIL_THROW(util::Exception, "Unknown argument " << key << "=" << value);
+    UTIL_THROW2(GetScoreProducerDescription() << ": Unknown argument " << key << "=" << value);
   }
 }
 
@@ -125,7 +163,27 @@ void FeatureFunction::ReadParameters()
 
 std::vector<float> FeatureFunction::DefaultWeights() const
 {
-  UTIL_THROW(util::Exception, "No default weights");
+  UTIL_THROW2(GetScoreProducerDescription() << ": No default weights");
+}
+
+void FeatureFunction::SetTuneableComponents(const std::string& value)
+{
+  std::vector<std::string> toks = Tokenize(value,",");
+  UTIL_THROW_IF2(toks.empty(), GetScoreProducerDescription()
+                 << ": Empty tuneable-components");
+  UTIL_THROW_IF2(toks.size()!=m_numScoreComponents, GetScoreProducerDescription()
+                 << ": tuneable-components value has to be a comma-separated list of "
+                 << m_numScoreComponents << " boolean values");
+
+  m_tuneableComponents.resize(m_numScoreComponents);
+  m_numTuneableComponents = m_numScoreComponents;
+
+  for (size_t i = 0; i < toks.size(); ++i) {
+    m_tuneableComponents[i] = Scan<bool>(toks[i]);
+    if (!m_tuneableComponents[i]) {
+      --m_numTuneableComponents;
+    }
+  }
 }
 
 }

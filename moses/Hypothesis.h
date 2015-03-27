@@ -25,6 +25,9 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include <iostream>
 #include <memory>
+
+#include <boost/scoped_ptr.hpp>
+
 #include <vector>
 #include "Phrase.h"
 #include "TypeDef.h"
@@ -35,6 +38,10 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include "ScoreComponentCollection.h"
 #include "InputType.h"
 #include "ObjectPool.h"
+
+#ifdef HAVE_XMLRPC_C
+#include <xmlrpc-c/base.hpp>
+#endif 
 
 namespace Moses
 {
@@ -77,7 +84,9 @@ protected:
   bool							m_wordDeleted;
   float							m_totalScore;  /*! score so far */
   float							m_futureScore; /*! estimated future cost to translate rest of sentence */
-  ScoreComponentCollection m_scoreBreakdown; /*! scores for this hypothesis */
+  /*! sum of scores of this hypothesis, and previous hypotheses. Lazily initialised.  */
+  mutable boost::scoped_ptr<ScoreComponentCollection> m_scoreBreakdown;
+  ScoreComponentCollection m_currScoreBreakdown; /*! scores for this hypothesis only */
   std::vector<const FFState*> m_ffStates;
   const Hypothesis 	*m_winningHypo;
   ArcList 					*m_arcList; /*! all arcs that end at the same trellis point as this hypothesis */
@@ -137,7 +146,7 @@ public:
     return m_currTargetWordsRange.GetNumWordsCovered();
   }
 
-  void Evaluate(const SquareMatrix &futureScore);
+  void EvaluateWhenApplied(const SquareMatrix &futureScore);
 
   int GetId()const {
     return m_id;
@@ -228,7 +237,14 @@ public:
     return m_arcList;
   }
   const ScoreComponentCollection& GetScoreBreakdown() const {
-    return m_scoreBreakdown;
+    if (!m_scoreBreakdown.get()) {
+      m_scoreBreakdown.reset(new ScoreComponentCollection());
+      m_scoreBreakdown->PlusEquals(m_currScoreBreakdown);
+      if (m_prevHypo) {
+        m_scoreBreakdown->PlusEquals(m_prevHypo->GetScoreBreakdown());
+      }
+    }
+    return *(m_scoreBreakdown.get());
   }
   float GetTotalScore() const {
     return m_totalScore;
@@ -244,8 +260,8 @@ public:
   }
 
   // Added by oliver.wilson@ed.ac.uk for async lm stuff.
-  void EvaluateWith(const StatefulFeatureFunction &sfff, int state_idx);
-  void EvaluateWith(const StatelessFeatureFunction &slff);
+  void EvaluateWhenApplied(const StatefulFeatureFunction &sfff, int state_idx);
+  void EvaluateWhenApplied(const StatelessFeatureFunction &slff);
 
   //! target span that trans opt would populate if applied to this hypo. Used for alignment check
   size_t GetNextStartPos(const TranslationOption &transOpt) const;
@@ -257,6 +273,28 @@ public:
   const TranslationOption &GetTranslationOption() const {
     return m_transOpt;
   }
+
+  void OutputAlignment(std::ostream &out) const;
+  static void OutputAlignment(std::ostream &out, const std::vector<const Hypothesis *> &edges);
+  static void OutputAlignment(std::ostream &out, const Moses::AlignmentInfo &ai, size_t sourceOffset, size_t targetOffset);
+
+  void OutputInput(std::ostream& os) const;
+  static void OutputInput(std::vector<const Phrase*>& map, const Hypothesis* hypo);
+
+  void OutputBestSurface(std::ostream &out, const std::vector<Moses::FactorType> &outputFactorOrder, char reportSegmentation, bool reportAllFactors) const;
+  void OutputSurface(std::ostream &out, const Hypothesis &edge, const std::vector<FactorType> &outputFactorOrder,
+                     char reportSegmentation, bool reportAllFactors) const;
+
+  // creates a map of TARGET positions which should be replaced by word using placeholder
+  std::map<size_t, const Moses::Factor*> GetPlaceholders(const Moses::Hypothesis &hypo, Moses::FactorType placeholderFactor) const;
+
+#ifdef HAVE_XMLRPC_C
+  void OutputWordAlignment(std::vector<xmlrpc_c::value>& out) const;
+  void OutputLocalWordAlignment(std::vector<xmlrpc_c::value>& dest) const;
+#endif 
+
+
+  
 };
 
 std::ostream& operator<<(std::ostream& out, const Hypothesis& hypothesis);

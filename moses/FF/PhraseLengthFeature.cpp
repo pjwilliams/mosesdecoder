@@ -15,10 +15,10 @@ PhraseLengthFeature::PhraseLengthFeature(const std::string &line)
   ReadParameters();
 }
 
-void PhraseLengthFeature::Evaluate(const Phrase &source
-                                   , const TargetPhrase &targetPhrase
-                                   , ScoreComponentCollection &scoreBreakdown
-                                   , ScoreComponentCollection &estimatedFutureScore) const
+void PhraseLengthFeature::EvaluateInIsolation(const Phrase &source
+    , const TargetPhrase &targetPhrase
+    , ScoreComponentCollection &scoreBreakdown
+    , ScoreComponentCollection &estimatedFutureScore) const
 {
   // get length of source and target phrase
   size_t targetLength = targetPhrase.GetSize();

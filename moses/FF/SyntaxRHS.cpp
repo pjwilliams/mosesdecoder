@@ -9,46 +9,38 @@ using namespace std;
 namespace Moses
 {
 SyntaxRHS::SyntaxRHS(const std::string &line)
-:StatelessFeatureFunction(1, line)
+  :StatelessFeatureFunction(1, line)
 {
   ReadParameters();
 }
 
-void SyntaxRHS::Evaluate(const Phrase &source
-                                   , const TargetPhrase &targetPhrase
-                                   , ScoreComponentCollection &scoreBreakdown
-                                   , ScoreComponentCollection &estimatedFutureScore) const
+void SyntaxRHS::EvaluateInIsolation(const Phrase &source
+                                    , const TargetPhrase &targetPhrase
+                                    , ScoreComponentCollection &scoreBreakdown
+                                    , ScoreComponentCollection &estimatedFutureScore) const
 {
 }
 
-void SyntaxRHS::Evaluate(const InputType &input
-                                   , const InputPath &inputPath
-                                   , const TargetPhrase &targetPhrase
-                                   , const StackVec *stackVec
-                                   , ScoreComponentCollection &scoreBreakdown
-                                   , ScoreComponentCollection *estimatedFutureScore) const
+void SyntaxRHS::EvaluateWithSourceContext(const InputType &input
+    , const InputPath &inputPath
+    , const TargetPhrase &targetPhrase
+    , const StackVec *stackVec
+    , ScoreComponentCollection &scoreBreakdown
+    , ScoreComponentCollection *estimatedFutureScore) const
 {
-	assert(stackVec);
-	for (size_t i = 0; i < stackVec->size(); ++i) {
-		const ChartCellLabel &cell = *stackVec->at(i);
+  assert(stackVec);
+  for (size_t i = 0; i < stackVec->size(); ++i) {
+    const ChartCellLabel &cell = *stackVec->at(i);
 
-	}
+  }
 
-	if (targetPhrase.GetNumNonTerminals()) {
-		  vector<float> newScores(m_numScoreComponents);
-		  newScores[0] = - std::numeric_limits<float>::infinity();
-		  scoreBreakdown.PlusEquals(this, newScores);
-	}
+  if (targetPhrase.GetNumNonTerminals()) {
+    vector<float> newScores(m_numScoreComponents);
+    newScores[0] = - std::numeric_limits<float>::infinity();
+    scoreBreakdown.PlusEquals(this, newScores);
+  }
 
 }
-
-void SyntaxRHS::Evaluate(const Hypothesis& hypo,
-                                   ScoreComponentCollection* accumulator) const
-{}
-
-void SyntaxRHS::EvaluateChart(const ChartHypothesis &hypo,
-                                        ScoreComponentCollection* accumulator) const
-{}
 
 }
 

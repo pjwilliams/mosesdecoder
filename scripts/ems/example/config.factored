@@ -44,11 +44,8 @@ wmt12-data = $working-dir/data
 # moses decoder
 decoder = $moses-bin-dir/moses
 
-# conversion of phrase table into binary on-disk format
-ttable-binarizer = $moses-bin-dir/processPhraseTable
-
 # conversion of rule table into binary on-disk format
-#ttable-binarizer = "$moses-bin-dir/CreateOnDiskPt 1 1 4 100 2"
+ttable-binarizer = "$moses-bin-dir/CreateOnDiskPt 1 1 4 100 2"
 
 # tokenizers - comment out if all your data is already tokenized
 input-tokenizer = "$moses-script-dir/tokenizer/tokenizer.perl -a -l $input-extension"
@@ -58,6 +55,10 @@ output-tokenizer = "$moses-script-dir/tokenizer/tokenizer.perl -a -l $output-ext
 input-truecaser = $moses-script-dir/recaser/truecase.perl
 output-truecaser = $moses-script-dir/recaser/truecase.perl
 detruecaser = $moses-script-dir/recaser/detruecase.perl
+
+# lowercaser - comment out if you use truecasing
+#input-lowercaser = $moses-script-dir/tokenizer/lowercase.perl
+#output-lowercaser = $moses-script-dir/tokenizer/lowercase.perl
 
 ### generic parallelizer for cluster and multi-core machines
 # you may specify a script that allows the parallel execution
@@ -137,7 +138,7 @@ raw-stem = $wmt12-data/training/undoc.2000.$pair-extension
 ### tool to be used for language model training
 # kenlm training
 lm-training = "$moses-script-dir/ems/support/lmplz-wrapper.perl -bin $moses-bin-dir/lmplz"
-settings = "--prune '0 0 1' -T $working-dir/lm/tmp -S 50%"
+settings = "--prune '0 0 1' -T $working-dir/lm -S 20%"
 
 # srilm 
 #lm-training = $srilm-dir/ngram-count
@@ -319,6 +320,7 @@ script = $moses-script-dir/training/train-model.perl
 # * "-mgiza -mgiza-cpus 8" to use mgiza instead of giza
 # * "-sort-buffer-size 8G -sort-compress gzip" to reduce on-disk sorting
 # * "-sort-parallel 8 -cores 8" to speed up phrase table building
+# * "-parallel" for parallel execution of mkcls and giza
 #
 #training-options = ""
 
@@ -391,6 +393,11 @@ alignment-symmetrization-method = grow-diag-final-and
 #mml-before-wa = "-proportion 0.9"
 #mml-after-wa = "-proportion 0.9"
 
+### build memory mapped suffix array phrase table
+# (binarizing the reordering table is a good idea, since filtering makes little sense)
+#mmsapt = "num-features=9 pfwd=g+ pbwd=g+ smooth=0 sample=1000 workers=1"
+#binarize-all = $moses-script-dir/training/binarize-model.perl
+
 ### create a bilingual concordancer for the model
 #
 #biconcor = $moses-bin-dir/biconcor
@@ -403,11 +410,17 @@ alignment-symmetrization-method = grow-diag-final-and
 #operation-sequence-model = "yes"
 #operation-sequence-model-order = 5
 #operation-sequence-model-settings = "-lmplz '$moses-src-dir/bin/lmplz -S 40% -T $working-dir/model/tmp'"
-
-### if OSM training should be skipped,
-# point to OSM Model 
 #
-# osm-model =
+# if OSM training should be skipped, point to OSM Model 
+#osm-model =
+
+### unsupervised transliteration module
+# Durrani, Sajjad, Hoang and Koehn (EACL, 2014).
+# "Integrating an Unsupervised Transliteration Model 
+# into Statistical Machine Translation."
+#
+#transliteration-module = "yes"
+#post-decoding-transliteration = "yes"
 
 ### lexicalized reordering: specify orientation type
 # (default: only distance-based reordering model)
@@ -444,7 +457,7 @@ max-phrase-length = 5
 
 ### settings for rule scoring
 #
-score-settings = "--GoodTuring"
+score-settings = "--GoodTuring --MinScore 2:0.0001"
 
 ### include word alignment in phrase table
 #
@@ -532,14 +545,12 @@ decoder-settings = ""
 # and also point to a configuration file that contains
 # pointers to all relevant model files
 #
-#config = 
+#config-with-reused-weights = 
 
 #########################################################
 ## RECASER: restore case, this part only trains the model
 
-[RECASING]
-
-#decoder = $moses-bin-dir/moses
+[RECASING] IGNORE
 
 ### training data
 # raw input needs to be still tokenized,
@@ -547,9 +558,14 @@ decoder-settings = ""
 #
 #tokenized = [LM:europarl:tokenized-corpus]
 
-# recase-config = 
-
+### additinal settings
+#
+recasing-settings = ""
 #lm-training = $srilm-dir/ngram-count
+decoder = $moses-bin-dir/moses
+
+# already a trained recaser? point to config file
+#recase-config = 
 
 #######################################################
 ## TRUECASER: train model to truecase corpora and input

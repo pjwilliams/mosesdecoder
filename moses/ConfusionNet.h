@@ -16,6 +16,7 @@ namespace Moses
 class FactorCollection;
 class TranslationOptionCollection;
 class Sentence;
+class TranslationTask;
 
 /** An input to the decoder where each position can be 1 of a number of words,
  *  each with an associated probability. Compared with a sentence, where each position is a word
@@ -45,7 +46,7 @@ public:
 
   const Column& GetColumn(size_t i) const {
     UTIL_THROW_IF2(i >= data.size(),
-    		"Out of bounds. Trying to access " << i << " when vector only contains " << data.size());
+                   "Out of bounds. Trying to access " << i << " when vector only contains " << data.size());
     return data[i];
   }
   const Column& operator[](size_t i) const {

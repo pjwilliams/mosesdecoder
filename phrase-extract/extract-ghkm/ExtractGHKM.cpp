@@ -27,9 +27,12 @@
 #include "OutputFileStream.h"
 #include "Options.h"
 #include "ParseTree.h"
+#include "PhraseOrientation.h"
 #include "ScfgRule.h"
 #include "ScfgRuleWriter.h"
 #include "Span.h"
+#include "StsgRule.h"
+#include "StsgRuleWriter.h"
 #include "SyntaxTree.h"
 #include "tables-core.h"
 #include "TargetIndicesWriter.h"
@@ -60,19 +63,30 @@ int ExtractGHKM::Main(int argc, char *argv[])
   ProcessOptions(argc, argv, options);
 
   // Open input files.
-  InputFileStream targetStream(options.targetFile);
-  InputFileStream sourceStream(options.sourceFile);
+  //
+  // The GHKM algorithm is neutral about whether the model is string-to-tree or
+  // tree-to-string.  This implementation assumes the model to be
+  // string-to-tree, but if the -t2s option is given then the source and target
+  // input files are switched prior to extraction and then the source and
+  // target of the extracted rules are switched on output.
+  std::string effectiveTargetFile = options.t2s ? options.sourceFile
+                                    : options.targetFile;
+  std::string effectiveSourceFile = options.t2s ? options.targetFile
+                                    : options.sourceFile;
+  InputFileStream targetStream(effectiveTargetFile);
+  InputFileStream sourceStream(effectiveSourceFile);
   InputFileStream alignmentStream(options.alignmentFile);
 
   // Open output files.
   OutputFileStream fwdExtractStream;
   OutputFileStream invExtractStream;
-  std::ofstream glueGrammarStream;
-  std::ofstream targetIndicesStream;
-  std::ofstream targetUnknownWordStream;
-  std::ofstream sourceUnknownWordStream;
-  std::ofstream sourceLabelSetStream;
-  std::ofstream unknownWordSoftMatchesStream;
+  OutputFileStream glueGrammarStream;
+  OutputFileStream targetIndicesStream;
+  OutputFileStream targetUnknownWordStream;
+  OutputFileStream sourceUnknownWordStream;
+  OutputFileStream sourceLabelSetStream;
+  OutputFileStream unknownWordSoftMatchesStream;
+
   std::string fwdFileName = options.extractFile;
   std::string invFileName = options.extractFile + std::string(".inv");
   if (options.gzOutput) {
@@ -81,6 +95,7 @@ int ExtractGHKM::Main(int argc, char *argv[])
   }
   OpenOutputFileOrDie(fwdFileName, fwdExtractStream);
   OpenOutputFileOrDie(invFileName, invExtractStream);
+
   if (!options.glueGrammarFile.empty()) {
     OpenOutputFileOrDie(options.glueGrammarFile, glueGrammarStream);
   }
@@ -97,7 +112,7 @@ int ExtractGHKM::Main(int argc, char *argv[])
     if (!options.sourceLabels) {
       Error("SourceLabels should be active if SourceLabelSet is supposed to be written to a file");
     }
-    OpenOutputFileOrDie(options.sourceLabelSetFile, sourceLabelSetStream); // TODO: global sourceLabelSet cannot be determined during parallelized extraction
+    OpenOutputFileOrDie(options.sourceLabelSetFile, sourceLabelSetStream); // note that this is not a global source label set if extraction is parallelized
   }
   if (!options.unknownWordSoftMatchesFile.empty()) {
     OpenOutputFileOrDie(options.unknownWordSoftMatchesFile, unknownWordSoftMatchesStream);
@@ -123,9 +138,9 @@ int ExtractGHKM::Main(int argc, char *argv[])
   std::string sourceLine;
   std::string alignmentLine;
   Alignment alignment;
-  XmlTreeParser xmlTreeParser(targetLabelSet, targetTopLabelSet);
-//  XmlTreeParser sourceXmlTreeParser(sourceLabelSet, sourceTopLabelSet);
-  ScfgRuleWriter writer(fwdExtractStream, invExtractStream, options);
+  XmlTreeParser targetXmlTreeParser(targetLabelSet, targetTopLabelSet);
+  ScfgRuleWriter scfgWriter(fwdExtractStream, invExtractStream, options);
+  StsgRuleWriter stsgWriter(fwdExtractStream, invExtractStream, options);
   std::auto_ptr<TargetIndicesWriter> targetIndicesWriter;
   if (!options.targetIndicesFile.empty()) {
     targetIndicesWriter.reset(new TargetIndicesWriter(targetIndicesStream));
@@ -153,7 +168,7 @@ int ExtractGHKM::Main(int argc, char *argv[])
     }
     std::auto_ptr<ParseTree> targetParseTree;
     try {
-      targetParseTree = xmlTreeParser.Parse(targetLine);
+      targetParseTree = targetXmlTreeParser.Parse(targetLine);
       assert(targetParseTree.get());
     } catch (const Exception &e) {
       std::ostringstream oss;
@@ -190,7 +205,7 @@ int ExtractGHKM::Main(int argc, char *argv[])
     // Read source tokens.
     std::vector<std::string> sourceTokens(ReadTokens(sourceLine));
 
-    // Construct a source ParseTree object object from the SyntaxTree object.
+    // Construct a source ParseTree object from the SyntaxTree object.
     std::auto_ptr<ParseTree> sourceParseTree;
 
     if (options.sourceLabels) {
@@ -221,6 +236,9 @@ int ExtractGHKM::Main(int argc, char *argv[])
       std::cerr << "skipping line " << lineNum << " without alignment points\n";
       continue;
     }
+    if (options.t2s) {
+      FlipAlignment(alignment);
+    }
 
     // Record word counts.
     if (!options.targetUnknownWordFile.empty()) {
@@ -249,14 +267,38 @@ int ExtractGHKM::Main(int argc, char *argv[])
       graph.ExtractComposedRules(options);
     }
 
+    // Initialize phrase orientation scoring object
+    PhraseOrientation phraseOrientation( sourceTokens.size(), targetXmlTreeParser.GetWords().size(), alignment);
+
     // Write the rules, subject to scope pruning.
     const std::vector<Node *> &targetNodes = graph.GetTargetNodes();
     for (std::vector<Node *>::const_iterator p = targetNodes.begin();
          p != targetNodes.end(); ++p) {
+
       const std::vector<const Subgraph *> &rules = (*p)->GetRules();
+
+      Moses::GHKM::PhraseOrientation::REO_CLASS l2rOrientation=Moses::GHKM::PhraseOrientation::REO_CLASS_UNKNOWN, r2lOrientation=Moses::GHKM::PhraseOrientation::REO_CLASS_UNKNOWN;
+      if (options.phraseOrientation && !rules.empty()) {
+        int sourceSpanBegin = *((*p)->GetSpan().begin());
+        int sourceSpanEnd   = *((*p)->GetSpan().rbegin());
+        l2rOrientation = phraseOrientation.GetOrientationInfo(sourceSpanBegin,sourceSpanEnd,Moses::GHKM::PhraseOrientation::REO_DIR_L2R);
+        r2lOrientation = phraseOrientation.GetOrientationInfo(sourceSpanBegin,sourceSpanEnd,Moses::GHKM::PhraseOrientation::REO_DIR_R2L);
+        // std::cerr << "span " << sourceSpanBegin << " " << sourceSpanEnd << std::endl;
+        // std::cerr << "phraseOrientation " << phraseOrientation.GetOrientationInfo(sourceSpanBegin,sourceSpanEnd) << std::endl;
+      }
+
       for (std::vector<const Subgraph *>::const_iterator q = rules.begin();
            q != rules.end(); ++q) {
         const Subgraph &fragment = **q;
+        // STSG output.
+        if (options.stsg) {
+          StsgRule rule(**q);
+          if (rule.Scope() <= options.maxScope) {
+            stsgWriter.Write(rule);
+          }
+          continue;
+        }
+        // SCFG output.
         ScfgRule *r = 0;
         if (options.sourceLabels) {
           r = new ScfgRule(fragment, &sourceSyntaxTree);
@@ -265,18 +307,42 @@ int ExtractGHKM::Main(int argc, char *argv[])
         }
         // TODO Can scope pruning be done earlier?
         if (r->Scope() <= options.maxScope) {
-          if (!options.treeFragments) {
-            writer.Write(*r);
-          } else {
-            writer.Write(*r,**q);
+          scfgWriter.Write(*r,lineNum,false);
+          if (options.treeFragments) {
+            fwdExtractStream << " {{Tree ";
+            (*q)->PrintTree(fwdExtractStream);
+            fwdExtractStream << "}}";
           }
           if (targetIndicesWriter.get()) {
             targetIndicesWriter->Write(fragment);
           }
+          if (options.partsOfSpeech) {
+            fwdExtractStream << " {{POS";
+            (*q)->PrintPartsOfSpeech(fwdExtractStream);
+            fwdExtractStream << "}}";
+          }
+          if (options.phraseOrientation) {
+            fwdExtractStream << " {{Orientation ";
+            phraseOrientation.WriteOrientation(fwdExtractStream,l2rOrientation);
+            fwdExtractStream << " ";
+            phraseOrientation.WriteOrientation(fwdExtractStream,r2lOrientation);
+            fwdExtractStream << "}}";
+            phraseOrientation.IncrementPriorCount(Moses::GHKM::PhraseOrientation::REO_DIR_L2R,l2rOrientation,1);
+            phraseOrientation.IncrementPriorCount(Moses::GHKM::PhraseOrientation::REO_DIR_R2L,r2lOrientation,1);
+          }
+          fwdExtractStream << std::endl;
+          invExtractStream << std::endl;
         }
         delete r;
       }
     }
+  }
+
+  if (options.phraseOrientation) {
+    std::string phraseOrientationPriorsFileName = options.extractFile + std::string(".phraseOrientationPriors");
+    OutputFileStream phraseOrientationPriorsStream;
+    OpenOutputFileOrDie(phraseOrientationPriorsFileName, phraseOrientationPriorsStream);
+    PhraseOrientation::WritePriorCounts(phraseOrientationPriorsStream);
   }
 
   std::map<std::string,size_t> sourceLabels;
@@ -294,8 +360,19 @@ int ExtractGHKM::Main(int argc, char *argv[])
     WriteSourceLabelSet(sourceLabels, sourceLabelSetStream);
   }
 
+  std::set<std::string> strippedTargetLabelSet;
+  std::map<std::string, int> strippedTargetTopLabelSet;
+  if (options.stripBitParLabels && 
+      (!options.glueGrammarFile.empty() || !options.unknownWordSoftMatchesFile.empty())) {
+    StripBitParLabels(targetLabelSet, targetTopLabelSet, strippedTargetLabelSet, strippedTargetTopLabelSet);
+  }
+
   if (!options.glueGrammarFile.empty()) {
-    WriteGlueGrammar(targetLabelSet, targetTopLabelSet, sourceLabels, options, glueGrammarStream);
+    if (options.stripBitParLabels) {
+      WriteGlueGrammar(strippedTargetLabelSet, strippedTargetTopLabelSet, sourceLabels, options, glueGrammarStream);
+    } else {
+      WriteGlueGrammar(targetLabelSet, targetTopLabelSet, sourceLabels, options, glueGrammarStream);
+    }
   }
 
   if (!options.targetUnknownWordFile.empty()) {
@@ -307,7 +384,11 @@ int ExtractGHKM::Main(int argc, char *argv[])
   }
 
   if (!options.unknownWordSoftMatchesFile.empty()) {
-    WriteUnknownWordSoftMatches(targetLabelSet, unknownWordSoftMatchesStream);
+    if (options.stripBitParLabels) {
+      WriteUnknownWordSoftMatches(strippedTargetLabelSet, unknownWordSoftMatchesStream);
+    } else {
+      WriteUnknownWordSoftMatches(targetLabelSet, unknownWordSoftMatchesStream);
+    }
   }
 
   return 0;
@@ -400,6 +481,8 @@ void ExtractGHKM::ProcessOptions(int argc, char *argv[],
    "write glue grammar to named file")
   ("GZOutput",
    "write gzipped extract files")
+  ("IncludeSentenceId",
+   "include sentence ID")
   ("MaxNodes",
    po::value(&options.maxNodes)->default_value(options.maxNodes),
    "set maximum number of tree nodes for composed rules")
@@ -414,8 +497,20 @@ void ExtractGHKM::ProcessOptions(int argc, char *argv[],
    "set maximum allowed scope")
   ("Minimal",
    "extract minimal rules only")
+  ("PartsOfSpeech",
+   "output parts-of-speech as property (preterminals from the parse tree)")
+  ("PartsOfSpeechFactor",
+   "output parts-of-speech as factor (preterminals from the parse tree)")
   ("PCFG",
    "include score based on PCFG scores in target corpus")
+  ("PhraseOrientation",
+   "output phrase orientation information")
+  ("StripBitParLabels",
+   "strip suffix starting with a hyphen symbol (\"-\") from non-terminal labels")
+  ("STSG",
+   "output STSG rules (default is SCFG)")
+  ("T2S",
+   "enable tree-to-string rule extraction (string-to-tree is assumed by default)")
   ("TreeFragments",
    "output parse tree information")
   ("SourceLabels",
@@ -517,11 +612,32 @@ void ExtractGHKM::ProcessOptions(int argc, char *argv[],
   if (vm.count("GZOutput")) {
     options.gzOutput = true;
   }
+  if (vm.count("IncludeSentenceId")) {
+    options.includeSentenceId = true;
+  }
   if (vm.count("Minimal")) {
     options.minimal = true;
   }
+  if (vm.count("PartsOfSpeech")) {
+    options.partsOfSpeech = true;
+  }
+  if (vm.count("PartsOfSpeechFactor")) {
+    options.partsOfSpeechFactor = true;
+  }
   if (vm.count("PCFG")) {
     options.pcfg = true;
+  }
+  if (vm.count("PhraseOrientation")) {
+    options.phraseOrientation = true;
+  }
+  if (vm.count("StripBitParLabels")) {
+    options.stripBitParLabels = true;
+  }
+  if (vm.count("STSG")) {
+    options.stsg = true;
+  }
+  if (vm.count("T2S")) {
+    options.t2s = true;
   }
   if (vm.count("TreeFragments")) {
     options.treeFragments = true;
@@ -586,7 +702,7 @@ void ExtractGHKM::WriteGlueGrammar(
   const std::map<std::string, int> &topLabelSet,
   const std::map<std::string,size_t> &sourceLabels,
   const Options &options,
-  std::ostream &out)
+  std::ostream &out) const
 {
   // choose a top label that is not already a label
   std::string topLabel = "QQQQQQ";
@@ -597,38 +713,79 @@ void ExtractGHKM::WriteGlueGrammar(
     }
   }
 
-  std::string sourceTopLabel = "TOPLABEL";
-  std::string sourceSLabel = "S";
-  std::string sourceSomeLabel = "SOMELABEL";
+  const size_t sourceLabelGlueTop = 0;
+  const size_t sourceLabelGlueX = 1;
+  const size_t sourceLabelSentenceStart = 2;
+  const size_t sourceLabelSentenceEnd = 3;
+//  const size_t partOfSpeechSentenceStart = 0;
+//  const size_t partOfSpeechSentenceEnd = 1;
+
+  #ifndef BOS_
+  #define BOS_ "<s>" //Beginning of sentence symbol
+  #endif
+  #ifndef EOS_
+  #define EOS_ "</s>" //End of sentence symbol
+  #endif
+
+  std::string sentenceStartSource = BOS_;
+  std::string sentenceEndSource   = EOS_;
+  std::string sentenceStartTarget = BOS_;
+  std::string sentenceEndTarget   = EOS_;
+  if (options.partsOfSpeech) {
+    sentenceStartTarget = sentenceStartTarget + "|" + BOS_;
+    sentenceEndTarget   = sentenceEndTarget   + "|" + EOS_;
+  }
+  if (options.partsOfSpeechFactor) {
+    sentenceStartTarget = sentenceStartTarget + "|" + BOS_;
+    sentenceEndTarget   = sentenceEndTarget   + "|" + EOS_;
+  }
 
   // basic rules
-  out << "<s> [X] ||| <s> [" << topLabel << "] ||| 1 ||| ||| ||| |||";
+  out << sentenceStartSource << " [X] ||| " << sentenceStartTarget << " [" << topLabel << "] ||| 1 ||| 0-0 ||| ||| |||";
   if (options.treeFragments) {
-    out << " {{Tree [" << topLabel << " <s>]}}";
+    out << " {{Tree [" << topLabel << " [SSTART <s>]]}}";
   }
+//  if (options.partsOfSpeech) {
+//    out << " {{POS " << partOfSpeechSentenceStart << "}}";
+//  }
   if (options.sourceLabels) {
-    out << " {{SourceLabels 1 1 " << sourceTopLabel << " 1}}";
+    out << " {{SourceLabels 2 1 " << sourceLabelSentenceStart << " 1 1 " << sourceLabelGlueTop << " 1}}";
+  }
+  if (options.phraseOrientation) {
+    out << " {{Orientation 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25}}";
   }
   out << std::endl;
 
-  out << "[X][" << topLabel << "] </s> [X] ||| [X][" << topLabel << "] </s> [" << topLabel << "] ||| 1 ||| 0-0 ||| ||| |||";
+  out << "[X][" << topLabel << "] " << sentenceEndSource << " [X] ||| [X][" << topLabel << "] " << sentenceEndTarget << " [" << topLabel << "] ||| 1 ||| 0-0 1-1 ||| ||| |||";
   if (options.treeFragments) {
-    out << " {{Tree [" << topLabel << " [" << topLabel << "] </s>]}}";
+    out << " {{Tree [" << topLabel << " [" << topLabel << "] [SEND </s>]]}}";
   }
+//  if (options.partsOfSpeech) {
+//    out << " {{POS " << partOfSpeechSentenceEnd << "}}";
+//  }
   if (options.sourceLabels) {
-    out << " {{SourceLabels 2 1 " << sourceTopLabel << " 1 1 " << sourceTopLabel << " 1}}";
+    out << " {{SourceLabels 4 1 " << sourceLabelSentenceStart << " " << sourceLabelGlueTop << " " << sourceLabelSentenceEnd << " 1 1 " << sourceLabelGlueTop << " 1}}";
+  }
+  if (options.phraseOrientation) {
+    out << " {{Orientation 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25}}";
   }
   out << std::endl;
 
   // top rules
   for (std::map<std::string, int>::const_iterator i = topLabelSet.begin();
        i != topLabelSet.end(); ++i) {
-    out << "<s> [X][" << i->first << "] </s> [X] ||| <s> [X][" << i->first << "] </s> [" << topLabel << "] ||| 1 ||| 1-1 ||| ||| |||";
-    if (options.treeFragments) { 
-      out << " {{Tree [" << topLabel << " <s> [" << i->first << "] </s>]}}";
+    out << sentenceStartSource << " [X][" << i->first << "] " << sentenceEndSource << " [X] ||| " << sentenceStartTarget << " [X][" << i->first << "] " << sentenceEndTarget << " [" << topLabel << "] ||| 1 ||| 0-0 1-1 2-2 ||| ||| |||";
+    if (options.treeFragments) {
+      out << " {{Tree [" << topLabel << " [SSTART <s>] [" << i->first << "] [SEND </s>]]}}";
     }
+//    if (options.partsOfSpeech) {
+//      out << " {{POS " << partOfSpeechSentenceStart << " " << partOfSpeechSentenceEnd << "}}";
+//    }
     if (options.sourceLabels) {
-      out << " {{SourceLabels 2 1 " << sourceSLabel << " 1 1 " << sourceTopLabel << " 1}}";
+      out << " {{SourceLabels 4 1 " << sourceLabelSentenceStart << " " << sourceLabelGlueX << " " << sourceLabelSentenceEnd << " 1 1 " << sourceLabelGlueTop << " 1}}";
+    }
+    if (options.phraseOrientation) {
+      out << " {{Orientation 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25}}";
     }
     out << std::endl;
   }
@@ -637,11 +794,14 @@ void ExtractGHKM::WriteGlueGrammar(
   for(std::set<std::string>::const_iterator i = labelSet.begin();
       i != labelSet.end(); i++ ) {
     out << "[X][" << topLabel << "] [X][" << *i << "] [X] ||| [X][" << topLabel << "] [X][" << *i << "] [" << topLabel << "] ||| 2.718 ||| 0-0 1-1 ||| ||| |||";
-    if (options.treeFragments) { 
+    if (options.treeFragments) {
       out << " {{Tree [" << topLabel << " ["<< topLabel << "] [" << *i << "]]}}";
     }
     if (options.sourceLabels) {
-      out << " {{SourceLabels 3 2.718 " << sourceTopLabel << " " << sourceSomeLabel << " 2.718 1 " << sourceTopLabel << " 2.718}}"; // TODO: there should be better options than using "SOMELABEL" 
+      out << " {{SourceLabels 3 1 " << sourceLabelGlueTop << " " << sourceLabelGlueX << " 1 1 " << sourceLabelGlueTop << " 1}}";
+    }
+    if (options.phraseOrientation) {
+      out << " {{Orientation 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25}}";
     }
     out << std::endl;
   }
@@ -652,14 +812,17 @@ void ExtractGHKM::WriteGlueGrammar(
     out << " {{Tree [" << topLabel << " [" << topLabel << "] [X]]}}";
   }
   if (options.sourceLabels) {
-    out << " {{SourceLabels 3 1 " << sourceTopLabel << " " << sourceSomeLabel << " 1 1 " << sourceTopLabel << " 1}}"; // TODO: there should be better options than using "SOMELABEL"
+    out << " {{SourceLabels 3 1 " << sourceLabelGlueTop << " " << sourceLabelGlueX << " 1 1 " << sourceLabelGlueTop << " 1}}";
+  }
+  if (options.phraseOrientation) {
+    out << " {{Orientation 0.25 0.25 0.25 0.25 0.25 0.25 0.25 0.25}}";
   }
   out << std::endl;
 }
 
 void ExtractGHKM::WriteSourceLabelSet(
   const std::map<std::string,size_t> &sourceLabels,
-  std::ostream &out)
+  std::ostream &out) const
 {
   out << sourceLabels.size() << std::endl;
   for (std::map<std::string,size_t>::const_iterator iter=sourceLabels.begin();
@@ -716,7 +879,7 @@ void ExtractGHKM::WriteUnknownWordLabel(
   const std::map<std::string, std::string> &wordLabel,
   const Options &options,
   std::ostream &out,
-  bool writeCounts)
+  bool writeCounts) const
 {
   if (!options.unknownWordSoftMatchesFile.empty()) {
     out << "UNK 1" << std::endl;
@@ -732,7 +895,16 @@ void ExtractGHKM::WriteUnknownWordLabel(
       std::map<std::string, std::string>::const_iterator q =
         wordLabel.find(p->first);
       assert(q != wordLabel.end());
-      ++labelCount[q->second];
+      if (options.stripBitParLabels) {
+        size_t pos = q->second.find('-');
+        if (pos == std::string::npos) {
+          ++labelCount[q->second];
+        } else {
+          ++labelCount[q->second.substr(0,pos)];
+        }
+      } else {
+        ++labelCount[q->second];
+      }
       ++total;
     }
   }
@@ -755,12 +927,44 @@ void ExtractGHKM::WriteUnknownWordLabel(
 
 void ExtractGHKM::WriteUnknownWordSoftMatches(
   const std::set<std::string> &labelSet,
-  std::ostream &out)
+  std::ostream &out) const
 {
-  std::set<std::string>::const_iterator p = labelSet.begin();
-  for (p; p != labelSet.end(); ++p) {
-      std::string label = *p;
-      out << "UNK " << label << std::endl;
+  for (std::set<std::string>::const_iterator p = labelSet.begin(); p != labelSet.end(); ++p) {
+    std::string label = *p;
+    out << "UNK " << label << std::endl;
+  }
+}
+
+void ExtractGHKM::StripBitParLabels(
+  const std::set<std::string> &labelSet,
+  const std::map<std::string, int> &topLabelSet,
+  std::set<std::string> &outLabelSet,
+  std::map<std::string, int> &outTopLabelSet) const
+{
+  for (std::set<std::string>::const_iterator it=labelSet.begin();
+       it!=labelSet.end(); ++it) {
+    size_t pos = it->find('-');
+    if (pos == std::string::npos) {
+      outLabelSet.insert(*it);
+    } else {
+      outLabelSet.insert(it->substr(0,pos));
+    }
+  }
+  for (std::map<std::string,int>::const_iterator it=topLabelSet.begin();
+       it!=topLabelSet.end(); ++it) {
+    size_t pos = it->first.find('-');
+    std::string stripped;
+    if (pos == std::string::npos) {
+      stripped = it->first;
+    } else {
+      stripped = it->first.substr(0,pos);
+    }
+    std::map<std::string, int>::iterator found=outTopLabelSet.find(stripped);
+    if (found != outTopLabelSet.end()) {
+      found->second += it->second;
+    } else {
+      outTopLabelSet.insert(std::pair<std::string,int>(stripped,it->second));
+    }
   }
 }
 

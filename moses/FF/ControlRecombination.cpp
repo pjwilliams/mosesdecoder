@@ -51,12 +51,12 @@ int ControlRecombinationState::Compare(const FFState& other) const
 std::vector<float> ControlRecombination::DefaultWeights() const
 {
   UTIL_THROW_IF2(m_numScoreComponents,
-		  "ControlRecombination should not have any scores");
+                 "ControlRecombination should not have any scores");
   vector<float> ret(0);
   return ret;
 }
 
-FFState* ControlRecombination::Evaluate(
+FFState* ControlRecombination::EvaluateWhenApplied(
   const Hypothesis& hypo,
   const FFState* prev_state,
   ScoreComponentCollection* accumulator) const
@@ -64,7 +64,7 @@ FFState* ControlRecombination::Evaluate(
   return new ControlRecombinationState(hypo, *this);
 }
 
-FFState* ControlRecombination::EvaluateChart(
+FFState* ControlRecombination::EvaluateWhenApplied(
   const ChartHypothesis &hypo,
   int /* featureID - used to index the state in the previous hypotheses */,
   ScoreComponentCollection* accumulator) const

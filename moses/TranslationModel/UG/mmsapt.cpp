@@ -1,14 +1,18 @@
 #include "mmsapt.h"
 #include <boost/foreach.hpp>
+#include <boost/scoped_ptr.hpp>
 #include <boost/tokenizer.hpp>
 #include <algorithm>
+#include "moses/TranslationModel/UG/mm/ug_phrasepair.h"
+#include "util/exception.hh"
+#include <set>
 
 namespace Moses
 {
   using namespace bitext;
   using namespace std;
   using namespace boost;
-  
+
   void 
   fillIdSeq(Phrase const& mophrase, size_t const ifactor,
 	    TokenIndex const& V, vector<id_type>& dest)
@@ -23,7 +27,7 @@ namespace Moses
     
 
   void 
-  parseLine(string const& line, map<string,string> & params)
+  parseLine(string const& line, map<string,string> & param)
   {
     char_separator<char> sep("; ");
     tokenizer<char_separator<char> > tokens(line,sep);
@@ -32,9 +36,14 @@ namespace Moses
 	size_t i = t.find_first_not_of(" =");
 	size_t j = t.find_first_of(" =",i+1);
 	size_t k = t.find_first_not_of(" =",j+1);
+	UTIL_THROW_IF2(i == string::npos || k == string::npos,
+		       "[" << HERE << "] "
+		       << "Parameter specification error near '"
+		       << t << "' in moses ini line\n"
+		      << line);
 	assert(i != string::npos);
 	assert(k != string::npos);
-	params[t.substr(i,j)] = t.substr(k);
+	param[t.substr(i,j)] = t.substr(k);
       }
   }
 
@@ -57,13 +66,6 @@ namespace Moses
   Mmsapt::
   Mmsapt(string const& line)
     : PhraseDictionary(line)
-    , m_lex_alpha(1.0)
-    , withLogCountFeatures(false)
-    , withCoherence(true)
-    , m_pfwd_features("g")
-    , m_pbwd_features("g")
-    , withPbwd(true)
-    , poolCounts(true)
     , ofactor(1,0)
     , m_tpc_ctr(0)
   {
@@ -94,81 +96,161 @@ namespace Moses
 
   void
   Mmsapt::
+  register_ff(sptr<pscorer> const& ff, vector<sptr<pscorer> > & registry)
+  {
+    registry.push_back(ff);
+    ff->setIndex(m_feature_names.size());
+    for (int i = 0; i < ff->fcnt(); ++i)
+      {
+	m_feature_names.push_back(ff->fname(i));
+	m_is_logval.push_back(ff->isLogVal(i));
+	m_is_integer.push_back(ff->isIntegerValued(i));
+      }
+  }
+
+  bool 
+  Mmsapt::
+  isLogVal(int i) const { return m_is_logval.at(i); }
+
+  bool 
+  Mmsapt::
+  isInteger(int i) const { return m_is_integer.at(i); }
+
+  void
+  Mmsapt::
   init(string const& line)
   {
     map<string,string>::const_iterator m;
-    map<string,string> param;
-    parseLine(line,param);
+    parseLine(line,this->param);
+
+    this->m_numScoreComponents = atoi(param["num-features"].c_str());
     
     m = param.find("config");
     if (m != param.end())
       read_config_file(m->second,param);
-    
-    bname = param["base"];
+
+    m = param.find("base");
+    if (m != param.end())
+      {
+	bname = m->second; 
+	m = param.find("path");
+	UTIL_THROW_IF2((m != param.end() && m->second != bname),
+	 	       "Conflicting aliases for path:\n" 
+		       << "path=" << string(m->second) << "\n"
+		       << "base=" << bname.c_str() );
+      }
+    else bname = param["path"];
     L1    = param["L1"];
     L2    = param["L2"];
-    assert(bname.size());
-    assert(L1.size());
-    assert(L2.size());
-
-    m = param.find("pfwd-denom");
-    m_pfwd_denom = m != param.end() ? m->second[0] : 's';
     
-    m = param.find("smooth");
-    m_lbop_parameter = m != param.end() ? atof(m->second.c_str()) : .05;
+    UTIL_THROW_IF2(bname.size() == 0, "Missing corpus base name at " << HERE);
+    UTIL_THROW_IF2(L1.size() == 0, "Missing L1 tag at " << HERE);
+    UTIL_THROW_IF2(L2.size() == 0, "Missing L2 tag at " << HERE);
 
-    m = param.find("max-samples");
-    m_default_sample_size = m != param.end() ? atoi(m->second.c_str()) : 1000;
-
-    if ((m = param.find("logcnt-features")) != param.end())
-      withLogCountFeatures = m->second != "0";
-
-    if ((m = param.find("coh")) != param.end())
-      withCoherence = m->second != "0";
+    // set defaults for all parameters if not specified so far
+    pair<string,string> dflt("input-factor","0");
+    input_factor = atoi(param.insert(dflt).first->second.c_str());
+    // shouldn't that be a string?
     
-    if ((m = param.find("pfwd")) != param.end())
-      m_pfwd_features = (m->second == "0" ? "" : m->second);
+    dflt = pair<string,string> ("smooth",".01");
+    m_lbop_conf = atof(param.insert(dflt).first->second.c_str());
 
-    if (m_pfwd_features == "1") // legacy; deprecated
-      m_pfwd_features[0] = m_pfwd_denom;
-    
-    if ((m = param.find("pbwd")) != param.end())
-      m_pbwd_features = (m->second == "0" ? "" : m->second);
+    dflt = pair<string,string> ("lexalpha","0");
+    m_lex_alpha = atof(param.insert(dflt).first->second.c_str());
 
-    if (m_pbwd_features == "1") 
-      m_pbwd_features = "r"; // lecagy; deprecated
+    dflt = pair<string,string> ("sample","1000");
+    m_default_sample_size = atoi(param.insert(dflt).first->second.c_str());
 
-    if ((m = param.find("lexalpha")) != param.end())
-      m_lex_alpha = atof(m->second.c_str());
-
-    m = param.find("workers");
-    m_workers = m != param.end() ? atoi(m->second.c_str()) : 8;
+    dflt = pair<string,string>("workers","8");
+    m_workers = atoi(param.insert(dflt).first->second.c_str());
     m_workers = min(m_workers,24UL);
 
-    if ((m = param.find("limit")) != param.end()) 
-      m_tableLimit = atoi(m->second.c_str());
+    
+    dflt = pair<string,string>("table-limit","20");
+    m_tableLimit = atoi(param.insert(dflt).first->second.c_str());
 
-    m = param.find("cache-size");
-    m_history.reserve(m != param.end()?max(1000,atoi(m->second.c_str())):10000);
+    dflt = pair<string,string>("cache","10000");
+    size_t hsize = max(1000,atoi(param.insert(dflt).first->second.c_str()));
+    m_history.reserve(hsize);
     // in plain language: cache size is at least 1000, and 10,000 by default
     // this cache keeps track of the most frequently used target phrase collections
     // even when not actively in use
-    
-    this->m_numScoreComponents = atoi(param["num-features"].c_str());
 
-    m = param.find("ifactor");
-    input_factor = m != param.end() ? atoi(m->second.c_str()) : 0;
+    // Feature functions are initialized  in function Load();
+    param.insert(pair<string,string>("pfwd",   "g"));  
+    param.insert(pair<string,string>("pbwd",   "g"));  
+    param.insert(pair<string,string>("logcnt", "0")); 
+    param.insert(pair<string,string>("coh",    "0")); 
+    param.insert(pair<string,string>("rare",   "1")); 
+    param.insert(pair<string,string>("prov",   "1")); 
     
     poolCounts = true;
     
+    if ((m = param.find("bias")) != param.end()) 
+	bias_file = m->second;
+
     if ((m = param.find("extra")) != param.end()) 
       extra_data = m->second;
 
+    dflt = pair<string,string>("tuneable","true");
+    m_tuneable = Scan<bool>(param.insert(dflt).first->second.c_str());
+
+    dflt = pair<string,string>("feature-sets","standard");
+    m_feature_set_names = Tokenize(param.insert(dflt).first->second.c_str(), ",");
+    m = param.find("name");
+    if (m != param.end()) m_name = m->second;
+
+    // check for unknown parameters
+    vector<string> known_parameters; known_parameters.reserve(50);
+    known_parameters.push_back("L1");
+    known_parameters.push_back("L2");
+    known_parameters.push_back("Mmsapt");
+    known_parameters.push_back("PhraseDictionaryBitextSampling"); // alias for Mmsapt
+    known_parameters.push_back("base"); // alias for path
+    known_parameters.push_back("bias");
+    known_parameters.push_back("cache");
+    known_parameters.push_back("coh");
+    known_parameters.push_back("config");
+    known_parameters.push_back("extra");
+    known_parameters.push_back("feature-sets");
+    known_parameters.push_back("input-factor");
+    known_parameters.push_back("lexalpha");
+    // known_parameters.push_back("limit"); // replaced by "table-limit"
+    known_parameters.push_back("logcnt");
+    known_parameters.push_back("name");
+    known_parameters.push_back("num-features");
+    known_parameters.push_back("output-factor");
+    known_parameters.push_back("path"); 
+    known_parameters.push_back("pbwd");
+    known_parameters.push_back("pfwd");
+    known_parameters.push_back("prov");
+    known_parameters.push_back("rare");
+    known_parameters.push_back("sample");
+    known_parameters.push_back("smooth");
+    known_parameters.push_back("table-limit");
+    known_parameters.push_back("tuneable");
+    known_parameters.push_back("unal");
+    known_parameters.push_back("workers");
+    sort(known_parameters.begin(),known_parameters.end());
+    for (map<string,string>::iterator m = param.begin(); m != param.end(); ++m)
+      {
+	UTIL_THROW_IF2(!binary_search(known_parameters.begin(),
+				      known_parameters.end(), m->first),
+		       HERE << ": Unknown parameter specification for Mmsapt: " 
+		       << m->first);
+      }
+  }
+
+  void 
+  Mmsapt::
+  load_bias(string const fname)
+  {
+    m_bias = btfix.loadSentenceBias(fname);
   }
 
   void
   Mmsapt::
-  load_extra_data(string bname)
+  load_extra_data(string bname, bool locking = true)
   {
     // TO DO: ADD CHECKS FOR ROBUSTNESS
     // - file existence?
@@ -186,122 +268,151 @@ namespace Moses
     while(getline(in2,line)) text2.push_back(line);
     while(getline(ina,line)) symal.push_back(line);
 
-    lock_guard<mutex> guard(this->lock);
+    boost::scoped_ptr<boost::lock_guard<boost::mutex> > guard;
+    if (locking) guard.reset(new boost::lock_guard<boost::mutex>(this->lock));
     btdyn = btdyn->add(text1,text2,symal);
     assert(btdyn);
-    // cerr << "Loaded " << btdyn->T1->size() << " sentence pairs" << endl;
+    cerr << "Loaded " << btdyn->T1->size() << " sentence pairs" << endl;
   }
 
-  size_t
+  template<typename fftype>
+  void
   Mmsapt::
-  add_corpus_specific_features
-  (vector<sptr<pscorer > >& ffvec, size_t num_feats)
+  check_ff(string const ffname, vector<sptr<pscorer> >* registry)
   {
-    float const lbop = m_lbop_parameter; // just for code readability below
-    // for the time being, we assume that all phrase probability features 
-    // use the same confidence parameter for lower-bound-estimation
-    for (size_t i = 0; i < m_pfwd_features.size(); ++i) 
-      {	
-	UTIL_THROW_IF2(m_pfwd_features[i] != 'g' &&
-		       m_pfwd_features[i] != 'r' &&
-		       m_pfwd_features[i] != 's',
-		       "Can't handle pfwd feature type '" 
-		       << m_pfwd_features[i] << "'.");
-	sptr<PScorePfwd<Token> > ff(new PScorePfwd<Token>());
-	size_t k = num_feats;
-	num_feats = ff->init(num_feats,lbop,m_pfwd_features[i]);
-	for (;k < num_feats; ++k) m_feature_names.push_back(ff->fname(k));
-	ffvec.push_back(ff);
-      }
-    
-    for (size_t i = 0; i < m_pbwd_features.size(); ++i) 
-      {	
-	UTIL_THROW_IF2(m_pbwd_features[i] != 'g' &&
-		       m_pbwd_features[i] != 'r' &&
-		       m_pbwd_features[i] != 's',
-		       "Can't handle pbwd feature type '" 
-		       << m_pbwd_features[i] << "'.");
-	sptr<PScorePbwd<Token> > ff(new PScorePbwd<Token>());
-	size_t k = num_feats;
-	num_feats = ff->init(num_feats,lbop,m_pbwd_features[i]);
-	for (;k < num_feats; ++k) m_feature_names.push_back(ff->fname(k));
-	ffvec.push_back(ff);
-      }
-
-    // if (withPbwd) 
-    //   {
-    // 	sptr<PScorePbwd<Token> > ff(new PScorePbwd<Token>());
-    // 	size_t k = num_feats;
-    // 	num_feats = ff->init(num_feats,lbop);
-    // 	for (; k < num_feats; ++k) m_feature_names.push_back(ff->fname(k));
-    // 	ffvec.push_back(ff);
-    //   }
-    
-    if (withLogCountFeatures) 
+    string const& spec = param[ffname];
+    if (spec == "" || spec == "0") return;
+    if (registry)
       {
-	sptr<PScoreLogCounts<Token> > ff(new PScoreLogCounts<Token>());
-	size_t k = num_feats;
-	num_feats = ff->init(num_feats);
-	for (; k < num_feats; ++k) m_feature_names.push_back(ff->fname(k));
-	ffvec.push_back(ff);
+	sptr<fftype> ff(new fftype(spec));
+	register_ff(ff, *registry);
       }
-
-    return num_feats;
+    else if (spec[spec.size()-1] == '+') // corpus specific
+      {
+	sptr<fftype> ff(new fftype(spec));
+	register_ff(ff, m_active_ff_fix);
+	ff.reset(new fftype(spec));
+	register_ff(ff, m_active_ff_dyn);
+      }
+    else 
+      {
+	sptr<fftype> ff(new fftype(spec));
+	register_ff(ff, m_active_ff_common);
+      }
   }
+
+  template<typename fftype>
+  void
+  Mmsapt::
+  check_ff(string const ffname, float const xtra, vector<sptr<pscorer> >* registry)
+  {
+    string const& spec = param[ffname];
+    if (spec == "" || spec == "0") return;
+    if (registry)
+      {
+	sptr<fftype> ff(new fftype(xtra,spec));
+	register_ff(ff, *registry);
+      }
+    else if (spec[spec.size()-1] == '+') // corpus specific
+      {
+	sptr<fftype> ff(new fftype(xtra,spec));
+	register_ff(ff, m_active_ff_fix);
+	ff.reset(new fftype(xtra,spec));
+	register_ff(ff, m_active_ff_dyn);
+      }
+    else 
+      {
+	sptr<fftype> ff(new fftype(xtra,spec));
+	register_ff(ff, m_active_ff_common);
+      }
+  }
+
+  // void
+  // Mmsapt::
+  // add_corpus_specific_features(vector<sptr<pscorer > >& registry)
+  // {
+  //   check_ff<PScorePbwd<Token> >("pbwd",m_lbop_conf,registry);
+  //   check_ff<PScoreLogCnt<Token> >("logcnt",registry);
+  // }
 
   void
   Mmsapt::
   Load()
   {
+    Load(true);
+  }
+
+  void
+  Mmsapt::
+  Load(bool with_checks)
+  {
+    boost::lock_guard<boost::mutex> guard(this->lock);
+
+    // can load only once
+    // UTIL_THROW_IF2(shards.size(),"Mmsapt is already loaded at " << HERE);
+    
+    // load feature sets
+    BOOST_FOREACH(string const& fsname, m_feature_set_names)
+      {
+	// standard (default) feature set
+	if (fsname == "standard")
+	  {
+	    // lexical scores 
+	    string lexfile = bname + L1 + "-" + L2 + ".lex";
+	    sptr<PScoreLex1<Token> > ff(new PScoreLex1<Token>(param["lex_alpha"],lexfile));
+	    register_ff(ff,m_active_ff_common);
+	    
+	    // these are always computed on pooled data
+	    check_ff<PScoreRareness<Token> > ("rare", &m_active_ff_common);
+	    check_ff<PScoreUnaligned<Token> >("unal", &m_active_ff_common);
+	    check_ff<PScoreCoherence<Token> >("coh",  &m_active_ff_common);
+	    
+	    // for these ones either way is possible (specification ends with '+' 
+	    // if corpus-specific 
+	    check_ff<PScorePfwd<Token> >("pfwd", m_lbop_conf);
+	    check_ff<PScorePbwd<Token> >("pbwd", m_lbop_conf);
+	    check_ff<PScoreLogCnt<Token> >("logcnt");
+	    
+	    // These are always corpus-specific
+	    check_ff<PScoreProvenance<Token> >("prov", &m_active_ff_fix);
+	    check_ff<PScoreProvenance<Token> >("prov", &m_active_ff_dyn);
+	  }
+	
+	// data source features (copies of phrase and word count specific to
+	// this translation model)
+	else if (fsname == "datasource")
+	  {
+	    sptr<PScorePC<Token> > ffpcnt(new PScorePC<Token>("pcnt"));
+	    register_ff(ffpcnt,m_active_ff_common);
+	    sptr<PScoreWC<Token> > ffwcnt(new PScoreWC<Token>("wcnt"));
+	    register_ff(ffwcnt,m_active_ff_common);
+	  }
+      }
+    // cerr << "Features: " << Join("|",m_feature_names) << endl;
+    
+    if (with_checks)
+      {
+	UTIL_THROW_IF2(this->m_feature_names.size() != this->m_numScoreComponents,
+		       "At " << HERE << ": number of feature values provided by "
+		       << "Phrase table (" << this->m_feature_names.size()
+		       << ") does not match number specified in Moses config file ("
+		       << this->m_numScoreComponents << ")!\n";);
+      }
+    // Load corpora. For the time being, we can have one memory-mapped static
+    // corpus and one in-memory dynamic corpus
+    // sptr<mmbitext> btfix(new mmbitext());
     btfix.num_workers = this->m_workers;
     btfix.open(bname, L1, L2);
     btfix.setDefaultSampleSize(m_default_sample_size);
+    // shards.push_back(btfix);
     
-    size_t num_feats = 0;
-    
-    // lexical scores are currently always active 
-    sptr<PScoreLex<Token> > ff(new PScoreLex<Token>(m_lex_alpha));
-    size_t k = num_feats;
-    num_feats = ff->init(num_feats, bname + L1 + "-" + L2 + ".lex");
-    for (; k < num_feats; ++k) m_feature_names.push_back(ff->fname(k));
-    m_active_ff_common.push_back(ff);
-    
-    if (withCoherence)
-      {
-	sptr<PScoreCoherence<Token> > ff(new PScoreCoherence<Token>());
-	size_t k = num_feats;
-	num_feats = ff->init(num_feats);
-	for (; k < num_feats; ++k) m_feature_names.push_back(ff->fname(k));
-	m_active_ff_common.push_back(ff);
-      }
-
-    num_feats = add_corpus_specific_features(m_active_ff_fix,num_feats);
-    // cerr << num_feats << "/" << this->m_numScoreComponents 
-    // << " at " << __FILE__ << ":" << __LINE__ << endl;
-    poolCounts = poolCounts && num_feats == this->m_numScoreComponents;
-    if (!poolCounts)
-      num_feats = add_corpus_specific_features(m_active_ff_dyn, num_feats);
-    
-#if 0
-    cerr << "MMSAPT provides " << num_feats << " features at " 
-	 << __FILE__ << ":" << __LINE__ << endl;
-    BOOST_FOREACH(string const& fname, m_feature_names)
-      cerr << fname << endl;
-#endif
-    UTIL_THROW_IF2(num_feats != this->m_numScoreComponents,
-		   "At " << __FILE__ << ":" << __LINE__
-		   << ": number of feature values provided by Phrase table (" 
-		   << num_feats << ") does not match number specified in "
-		   << "Moses config file (" << this->m_numScoreComponents 
-		   << ")!\n";);
-    
-    
-    btdyn.reset(new imBitext<Token>(btfix.V1, btfix.V2,m_default_sample_size));
+    btdyn.reset(new imbitext(btfix.V1, btfix.V2, m_default_sample_size));
     btdyn->num_workers = this->m_workers;
+    if (bias_file.size())
+      load_bias(bias_file);
+    
     if (extra_data.size()) 
-      {
-	load_extra_data(extra_data);
-      }
+      load_extra_data(extra_data,false);
     
 #if 0
     // currently not used
@@ -313,7 +424,8 @@ namespace Moses
 	wlex21[c->id].push_back(r);
     COOCraw.open(bname + L1 + "-" + L2 + ".coc");
 #endif
-    
+    assert(btdyn);
+    // cerr << "LOADED " << HERE << endl;
   }
 
   void
@@ -330,262 +442,75 @@ namespace Moses
 
   TargetPhrase* 
   Mmsapt::
-  createTargetPhrase(Phrase        const& src, 
-		     Bitext<Token> const& bt, 
-		     PhrasePair    const& pp) const
+  mkTPhrase(Phrase const& src,
+	    PhrasePair<Token>* fix, 
+	    PhrasePair<Token>* dyn, 
+	    sptr<Bitext<Token> > const& dynbt) const
   {
-    Word w; uint32_t sid,off,len;    
-    TargetPhrase* tp = new TargetPhrase();
-    parse_pid(pp.p2, sid, off, len);
-    Token const* x = bt.T2->sntStart(sid) + off;
-    for (uint32_t k = 0; k < len; ++k)
+    UTIL_THROW_IF2(!fix && !dyn, HERE << 
+		   ": Can't create target phrase from nothing.");
+    vector<float> fvals(this->m_numScoreComponents);
+    PhrasePair<Token> pool = fix ? *fix : *dyn;
+    if (fix) 
       {
-	// cerr << (*bt.V2)[x[k].id()] << " at " << __FILE__ << ":" << __LINE__ << endl;
-	StringPiece wrd = (*bt.V2)[x[k].id()];
-	// if ((off+len) > bt.T2->sntLen(sid))
-	// cerr << off << ";" << len << " " << bt.T2->sntLen(sid) << endl;
-	assert(off+len <= bt.T2->sntLen(sid));
-	w.CreateFromString(Output,ofactor,wrd,false);
+	BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_fix)
+	  (*ff)(btfix, *fix, &fvals);
+      }
+    if (dyn)
+      {
+	BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_dyn)
+	  (*ff)(*dynbt, *dyn, &fvals);
+      }
+    
+    if (fix && dyn) { pool += *dyn; }
+    else if (fix)
+      {
+	PhrasePair<Token> zilch; zilch.init();
+	TSA<Token>::tree_iterator m(dynbt->I2.get(), fix->start2, fix->len2);
+	if (m.size() == fix->len2)
+	  zilch.raw2 = m.approxOccurrenceCount();
+	pool += zilch;
+	BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_dyn)
+	  (*ff)(*dynbt, ff->allowPooling() ? pool : zilch, &fvals);
+      }
+    else if (dyn)
+      {
+	PhrasePair<Token> zilch; zilch.init();
+	TSA<Token>::tree_iterator m(btfix.I2.get(), dyn->start2, dyn->len2);
+	if (m.size() == dyn->len2)
+	  zilch.raw2 = m.approxOccurrenceCount();
+	pool += zilch;
+	BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_fix)
+	  (*ff)(*dynbt, ff->allowPooling() ? pool : zilch, &fvals);
+      }
+    if (fix) 
+      {
+ 	BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_common)
+	  (*ff)(btfix, pool, &fvals);
+      }
+    else
+      {
+ 	BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_common)
+	  (*ff)(*dynbt, pool, &fvals);
+      }
+    TargetPhrase* tp = new TargetPhrase(this);
+    Token const* x = fix ? fix->start2 : dyn->start2;
+    uint32_t len = fix ? fix->len2 : dyn->len2;
+    for (uint32_t k = 0; k < len; ++k, x = x->next())
+      {
+	StringPiece wrd = (*(btfix.V2))[x->id()];
+	Word w; w.CreateFromString(Output,ofactor,wrd,false);
 	tp->AddWord(w);
       }
-    tp->GetScoreBreakdown().Assign(this, pp.fvals);
-    tp->Evaluate(src);
+    tp->SetAlignTerm(pool.aln);
+    tp->GetScoreBreakdown().Assign(this, fvals);
+    tp->EvaluateInIsolation(src);
     return tp;
   }
 
-  // process phrase stats from a single parallel corpus
-  void
-  Mmsapt::
-  process_pstats
-  (Phrase   const& src,
-   uint64_t const  pid1, 
-   pstats   const& stats, 
-   Bitext<Token> const & bt, 
-   TargetPhraseCollection* tpcoll
-   ) const
-  {
-    PhrasePair pp;   
-    pp.init(pid1, stats, this->m_numScoreComponents);
-    pstats::trg_map_t::const_iterator t;
-    for (t = stats.trg.begin(); t != stats.trg.end(); ++t)
-      {
-   	pp.update(t->first,t->second);
-	BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_fix)
-	  (*ff)(bt,pp);
-	BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_common)
-	  (*ff)(bt,pp);
-	tpcoll->Add(createTargetPhrase(src,bt,pp));
-      }
-  }
-
-  void
-  Mmsapt::
-  ScorePPfix(bitext::PhrasePair& pp) const
-  {
-    BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_fix)
-      (*ff)(btfix,pp);
-    BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_common)
-      (*ff)(btfix,pp);
-  }
-
-  // process phrase stats from a single parallel corpus
-  bool
-  Mmsapt::
-  pool_pstats(Phrase   const& src,
-	      uint64_t const  pid1a, 
-	      pstats        * statsa, 
-	      Bitext<Token> const & bta,
-	      uint64_t const  pid1b, 
-	      pstats   const* statsb, 
-	      Bitext<Token> const & btb,
-	      TargetPhraseCollection* tpcoll) const
-  {
-    PhrasePair pp;
-    if (statsa && statsb)
-      pp.init(pid1b, *statsa, *statsb, this->m_numScoreComponents);
-    else if (statsa)
-      pp.init(pid1a, *statsa, this->m_numScoreComponents);
-    else if (statsb)
-      pp.init(pid1b, *statsb, this->m_numScoreComponents);
-    else return false; // throw "no stats for pooling available!";
-
-    pstats::trg_map_t::const_iterator b;
-    pstats::trg_map_t::iterator a;
-    if (statsb)
-      {
-	for (b = statsb->trg.begin(); b != statsb->trg.end(); ++b)
-	  {
-	    uint32_t sid,off,len;    
-	    parse_pid(b->first, sid, off, len);
-	    Token const* x = bta.T2->sntStart(sid) + off;
-	    TSA<Token>::tree_iterator m(bta.I2.get(),x,x+len);
-	    if (m.size() == len) 
-	      {
-		;
-		if (statsa && ((a = statsa->trg.find(m.getPid())) 
-			       != statsa->trg.end()))
-		  {
-		    pp.update(b->first,a->second,b->second);
-		    a->second.invalidate();
-		  }
-		else 
-		  pp.update(b->first,m.approxOccurrenceCount(),
-			    b->second);
-	      }
-	    else pp.update(b->first,b->second);
-	    BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_fix)
-	      (*ff)(btb,pp);
-	    BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_common)
-	      (*ff)(btb,pp);
-	    tpcoll->Add(createTargetPhrase(src,btb,pp));
-	  }
-      }
-    if (!statsa) return statsb != NULL;
-    for (a = statsa->trg.begin(); a != statsa->trg.end(); ++a)
-      {
-	uint32_t sid,off,len;
-	if (!a->second.valid()) continue;
-	parse_pid(a->first, sid, off, len);
-	if (btb.T2)
-	  {
-	    Token const* x = bta.T2->sntStart(sid) + off;
-	    TSA<Token>::tree_iterator m(btb.I2.get(), x, x+len);
-	    if (m.size() == len) 
-	      pp.update(a->first,m.approxOccurrenceCount(),a->second);
-	    else 
-	      pp.update(a->first,a->second);
-	  }
-	else 
-	  pp.update(a->first,a->second);
-#if 0
-	// jstats const& j = a->second;
-	cerr << bta.T1->pid2str(bta.V1.get(),pp.p1) << " ::: " 
-	     << bta.T2->pid2str(bta.V2.get(),pp.p2) << endl;
-	cerr << pp.raw1 << " " << pp.sample1 << " " << pp.good1 << " " 
-	     << pp.joint << " " << pp.raw2 << endl;
-#endif
-
-	UTIL_THROW_IF2(pp.raw2 == 0, 
-		       "OOPS" << bta.T1->pid2str(bta.V1.get(),pp.p1) << " ::: " 
-		       << bta.T2->pid2str(bta.V2.get(),pp.p2) << ": "
-		       << pp.raw1 << " " << pp.sample1 << " " 
-		       << pp.good1 << " " << pp.joint << " " 
-		       << pp.raw2);
-	BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_fix)
-	  (*ff)(bta,pp);
-	BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_common)
-	  (*ff)(bta,pp);
-	tpcoll->Add(createTargetPhrase(src,bta,pp));
-      }
-    return true;
-  }
-  
-  
-  // process phrase stats from a single parallel corpus
-  bool
-  Mmsapt::
-  combine_pstats
-  (Phrase   const& src,
-   uint64_t const  pid1a, pstats      * statsa, Bitext<Token> const & bta,
-   uint64_t const  pid1b, pstats const* statsb, Bitext<Token> const & btb,
-   TargetPhraseCollection* tpcoll) const
-  {
-    PhrasePair ppfix,ppdyn,pool; 
-    // ppfix: counts from btfix
-    // ppdyn: counts from btdyn
-    // pool: pooled counts from both
-    Word w;
-    if (statsa) ppfix.init(pid1a,*statsa,this->m_numScoreComponents);
-    if (statsb) ppdyn.init(pid1b,*statsb,this->m_numScoreComponents);
-    pstats::trg_map_t::const_iterator b;
-    pstats::trg_map_t::iterator a;
-
-    if (statsb)
-      {
-	pool.init(pid1b,*statsb,0);
-	for (b = statsb->trg.begin(); b != statsb->trg.end(); ++b)
-	  {
-	    ppdyn.update(b->first,b->second);
-	    BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_dyn)
-	      (*ff)(btb,ppdyn);
-	    
-	    uint32_t sid,off,len;    
-	    parse_pid(b->first, sid, off, len);
-	    Token const* x = bta.T2->sntStart(sid) + off;
-	    TSA<Token>::tree_iterator m(bta.I2.get(),x,x+len);
-	    
-	    if (m.size() && statsa && 
-		((a = statsa->trg.find(m.getPid())) != statsa->trg.end()))
-	      {
-		// phrase pair found also in btfix
-		ppfix.update(a->first,a->second);
-		BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_fix)
-		  (*ff)(bta,ppfix,&ppdyn.fvals);
-		BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_common)
-		  (*ff)(bta,ppfix,&ppdyn.fvals);
-		a->second.invalidate();
-	      }
-	    else 
-	      {
-		// phrase pair was not found in btfix
-
-		// ... but the source phrase was  
-		if (m.size()) 
-		  pool.update(b->first,m.approxOccurrenceCount(), b->second);
-
-		// ... and not even the source phrase 
-		else 
-		  pool.update(b->first,b->second);
-		
-		BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_fix)
-		  (*ff)(btb,pool,&ppdyn.fvals);
-		BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_common)
-		  (*ff)(btb,pool,&ppdyn.fvals);
-		
-	      }
-
-	    tpcoll->Add(createTargetPhrase(src,btb,ppdyn));
-	  }
-      }
-
-    // now deal with all phraise pairs that are ONLY in btfix
-    // (the ones that are in both were dealt with above)
-    if (statsa)
-      {
-	pool.init(pid1a,*statsa,0);
-	for (a = statsa->trg.begin(); a != statsa->trg.end(); ++a)
-	  {
-	    if (!a->second.valid()) continue; // done above
-	    ppfix.update(a->first,a->second);
-	    BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_fix)
-	      (*ff)(bta,ppfix);
-	    BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_common)
-	      (*ff)(bta,ppfix);
-	    
-	    if (btb.I2)
-	      {
-		uint32_t sid,off,len;    
-		parse_pid(a->first, sid, off, len);
-		Token const* x = bta.T2->sntStart(sid) + off;
-		TSA<Token>::tree_iterator m(btb.I2.get(),x,x+len);
-		if (m.size())
-		  pool.update(a->first,m.approxOccurrenceCount(),a->second);
-		else
-		  pool.update(a->first,a->second);
-	      }
-	    else pool.update(a->first,a->second);
-	    BOOST_FOREACH(sptr<pscorer> const& ff, m_active_ff_dyn)
-	      (*ff)(btb,pool,&ppfix.fvals);
-	    if (ppfix.p2)
-	      tpcoll->Add(createTargetPhrase(src,bta,ppfix));
-	  }
-      }
-    return (statsa || statsb);
-  }
-  
   Mmsapt::
   TargetPhraseCollectionWrapper::
-  TargetPhraseCollectionWrapper(size_t r, uint64_t k)
+  TargetPhraseCollectionWrapper(size_t r, ::uint64_t k)
     : revision(r), key(k), refCount(0), idx(-1)
   { }
 
@@ -595,9 +520,7 @@ namespace Moses
   {
     assert(this->refCount == 0);
   }
-
   
-
   // This is not the most efficient way of phrase lookup! 
   TargetPhraseCollection const* 
   Mmsapt::
@@ -605,28 +528,26 @@ namespace Moses
   {
     // map from Moses Phrase to internal id sequence
     vector<id_type> sphrase; 
-    fillIdSeq(src,input_factor,*btfix.V1,sphrase);
+    fillIdSeq(src,input_factor,*(btfix.V1),sphrase);
     if (sphrase.size() == 0) return NULL;
     
-    // lookup in static bitext 
-    TSA<Token>::tree_iterator mfix(btfix.I1.get(),&sphrase[0],sphrase.size());
-
-    // lookup in dynamic bitext
     // Reserve a local copy of the dynamic bitext in its current form. /btdyn/
     // is set to a new copy of the dynamic bitext every time a sentence pair
     // is added. /dyn/ keeps the old bitext around as long as we need it.
     sptr<imBitext<Token> > dyn;
     { // braces are needed for scoping mutex lock guard!
       boost::lock_guard<boost::mutex> guard(this->lock);
+      assert(btdyn);
       dyn = btdyn;
     }
     assert(dyn);
+
+    // lookup phrases in both bitexts
+    TSA<Token>::tree_iterator mfix(btfix.I1.get(), &sphrase[0], sphrase.size());
     TSA<Token>::tree_iterator mdyn(dyn->I1.get());
     if (dyn->I1.get())
-      {
-	for (size_t i = 0; mdyn.size() == i && i < sphrase.size(); ++i)
-	  mdyn.extend(sphrase[i]);
-      }
+      for (size_t i = 0; mdyn.size() == i && i < sphrase.size(); ++i)
+	mdyn.extend(sphrase[i]);
 
 #if 0
     cerr << src << endl;
@@ -634,43 +555,72 @@ namespace Moses
 	 << mdyn.size() << " " << mdyn.getPid() << endl;
 #endif
 
-    // phrase not found in either
-    if (mdyn.size() != sphrase.size() && 
-	mfix.size() != sphrase.size()) 
-      return NULL; // not found
+    if (mdyn.size() != sphrase.size() && mfix.size() != sphrase.size()) 
+      return NULL; // phrase not found in either bitext
 
     // cache lookup:
-
-    uint64_t phrasekey;
-    if (mfix.size() == sphrase.size())
-      phrasekey = (mfix.getPid()<<1);
-    else
-      phrasekey = (mdyn.getPid()<<1)+1;
-
+    ::uint64_t phrasekey = (mfix.size() == sphrase.size() ? (mfix.getPid()<<1) 
+			  : (mdyn.getPid()<<1)+1);
     size_t revision = dyn->revision();
     {
       boost::lock_guard<boost::mutex> guard(this->lock);
       tpc_cache_t::iterator c = m_cache.find(phrasekey);
+      // TO DO: we should revise the revision mechanism: we take the length
+      // of the dynamic bitext (in sentences) at the time the PT entry
+      // was stored as the time stamp. For each word in the
+      // vocabulary, we also store its most recent occurrence in the
+      // bitext. Only if the timestamp of each word in the phrase is
+      // newer than the timestamp of the phrase itself we must update 
+      // the entry. 
       if (c != m_cache.end() && c->second->revision == revision)
 	return encache(c->second);
     }
     
-    // not found or not up to date
+    // OK: pt entry not found or not up to date
+    // lookup and expansion could be done in parallel threds, 
+    // but ppdyn is probably small anyway
+    // TO DO: have Bitexts return lists of PhrasePairs instead of pstats
+    // no need to expand pstats at every single lookup again, especially 
+    // for btfix.
     sptr<pstats> sfix,sdyn;
-    if (mfix.size() == sphrase.size())
+    if (mfix.size() == sphrase.size()) 
       sfix = btfix.lookup(mfix);
-    if (mdyn.size() == sphrase.size())
-      sdyn = dyn->lookup(mdyn);
-    
-    TargetPhraseCollectionWrapper* 
-      ret = new TargetPhraseCollectionWrapper(revision,phrasekey);
-    if ((poolCounts && 
-	 pool_pstats(src, mfix.getPid(),sfix.get(),btfix, 
-		     mdyn.getPid(),sdyn.get(),*dyn,ret))
-	|| combine_pstats(src, mfix.getPid(),sfix.get(),btfix, 
-			  mdyn.getPid(),sdyn.get(),*dyn,ret))
+    if (mdyn.size() == sphrase.size()) sdyn = dyn->lookup(mdyn);
+
+    vector<PhrasePair<Token> > ppfix,ppdyn;
+    PhrasePair<Token>::SortByTargetIdSeq sort_by_tgt_id;
+    if (sfix) 
       {
-	if (m_tableLimit) ret->Prune(true,m_tableLimit);
+	expand(mfix, btfix, *sfix, ppfix);
+	sort(ppfix.begin(), ppfix.end(),sort_by_tgt_id);
+      }
+    if (sdyn)
+      {
+	expand(mdyn, *dyn, *sdyn, ppdyn);
+	sort(ppdyn.begin(), ppdyn.end(),sort_by_tgt_id);
+      }
+
+    // now we have two lists of Phrase Pairs, let's merge them
+    TargetPhraseCollectionWrapper* ret;
+    ret = new TargetPhraseCollectionWrapper(revision,phrasekey);
+    PhrasePair<Token>::SortByTargetIdSeq sorter;
+    size_t i = 0; size_t k = 0;
+    while (i < ppfix.size() && k < ppdyn.size())
+      {
+	int cmp = sorter.cmp(ppfix[i], ppdyn[k]);
+	if      (cmp  < 0) ret->Add(mkTPhrase(src,&ppfix[i++],NULL,dyn));
+	else if (cmp == 0) ret->Add(mkTPhrase(src,&ppfix[i++],&ppdyn[k++],dyn));
+	else               ret->Add(mkTPhrase(src,NULL,&ppdyn[k++],dyn));
+      }
+    while (i < ppfix.size()) ret->Add(mkTPhrase(src,&ppfix[i++],NULL,dyn));
+    while (k < ppdyn.size()) ret->Add(mkTPhrase(src,NULL,&ppdyn[k++],dyn));
+    if (m_tableLimit) ret->Prune(true, m_tableLimit);
+    else ret->Prune(true,ret->GetSize());
+#if 0
+    if (combine_pstats(src, 
+		       mfix.getPid(), sfix.get(), btfix, 
+		       mdyn.getPid(), sdyn.get(),  *dyn, ret))
+      {
 #if 0
 	sort(ret->begin(), ret->end(), CompareTargetPhrase());
 	cout << "SOURCE PHRASE: " << src << endl;
@@ -686,6 +636,9 @@ namespace Moses
 	  }
 #endif
       }
+#endif
+
+    // put the result in the cache and return
     boost::lock_guard<boost::mutex> guard(this->lock);
     m_cache[phrasekey] = ret;
     return encache(ret);
@@ -727,6 +680,7 @@ namespace Moses
     // assert(0);
   }
 
+#if defined(timespec)
   bool operator<(timespec const& a, timespec const& b)
   {
     if (a.tv_sec != b.tv_sec) return a.tv_sec < b.tv_sec;
@@ -737,6 +691,19 @@ namespace Moses
   {
     if (a.tv_sec != b.tv_sec) return a.tv_sec > b.tv_sec;
     return (a.tv_nsec >= b.tv_nsec);
+  }
+#endif 
+
+  bool operator<(timeval const& a, timeval const& b)
+  {
+    if (a.tv_sec != b.tv_sec) return a.tv_sec < b.tv_sec;
+    return (a.tv_usec < b.tv_usec);
+  }
+
+  bool operator>=(timeval const& a, timeval const& b)
+  {
+    if (a.tv_sec != b.tv_sec) return a.tv_sec > b.tv_sec;
+    return (a.tv_usec >= b.tv_usec);
   }
 
   void 
@@ -768,12 +735,10 @@ namespace Moses
   decache(TargetPhraseCollectionWrapper* ptr) const
   {
     if (ptr->refCount || ptr->idx >= 0) return;
-    
-    timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
-    timespec r; clock_getres(CLOCK_MONOTONIC,&r);
-
     // if (t.tv_nsec < v[0]->tstamp.tv_nsec)
 #if 0
+    timespec t; clock_gettime(CLOCK_MONOTONIC,&t);
+    timespec r; clock_getres(CLOCK_MONOTONIC,&r);
     float delta = t.tv_sec - ptr->tstamp.tv_sec;
     cerr << "deleting old cache entry after "
 	 << delta << " seconds."
@@ -798,8 +763,11 @@ namespace Moses
     if (!ptr) return NULL;
     ++ptr->refCount;
     ++m_tpc_ctr;
+#if defined(timespec)
     clock_gettime(CLOCK_MONOTONIC, &ptr->tstamp);
-    
+#else
+    gettimeofday(&ptr->tstamp, NULL);
+#endif
     // update history
     if (m_history.capacity() > 1)
       {
@@ -832,6 +800,13 @@ namespace Moses
   Mmsapt::
   PrefixExists(Moses::Phrase const& phrase) const
   {
+    return PrefixExists(phrase,NULL); 
+  }
+
+  bool
+  Mmsapt::
+  PrefixExists(Moses::Phrase const& phrase, SamplingBias const* const bias) const
+  {
     if (phrase.GetSize() == 0) return false;
     vector<id_type> myphrase; 
     fillIdSeq(phrase,input_factor,*btfix.V1,myphrase);
@@ -839,6 +814,7 @@ namespace Moses
     TSA<Token>::tree_iterator mfix(btfix.I1.get(),&myphrase[0],myphrase.size());
     if (mfix.size() == myphrase.size()) 
       {
+	btfix.prep(mfix,bias);
 	// cerr << phrase << " " << mfix.approxOccurrenceCount() << endl;
 	return true;
       }
@@ -854,6 +830,8 @@ namespace Moses
       {
 	for (size_t i = 0; mdyn.size() == i && i < myphrase.size(); ++i)
 	  mdyn.extend(myphrase[i]);
+	// let's assume a uniform bias over the foreground corpus
+	if (mdyn.size() == myphrase.size()) dyn->prep(mdyn,NULL);
       }
     return mdyn.size() == myphrase.size();
   }
@@ -881,8 +859,18 @@ namespace Moses
   bool
   Mmsapt::
   ProvidesPrefixCheck() const
+  { return true; }
+
+  string const&
+  Mmsapt::
+  GetName() const 
+  { return m_name; }
+
+  sptr<DocumentBias>
+  Mmsapt::
+  setupDocumentBias(map<string,float> const& bias) const
   {
-    return true;
+    return btfix.setupDocumentBias(bias);
   }
 
 }

@@ -27,21 +27,21 @@ class LanguageModelDALM : public LanguageModel
 public:
   LanguageModelDALM(const std::string &line);
   virtual ~LanguageModelDALM();
-  
+
   void Load();
 
   virtual const FFState *EmptyHypothesisState(const InputType &/*input*/) const;
 
   virtual void CalcScore(const Phrase &phrase, float &fullScore, float &ngramScore, size_t &oovCount) const;
 
-  virtual FFState *Evaluate(const Hypothesis &hypo, const FFState *ps, ScoreComponentCollection *out) const;
+  virtual FFState *EvaluateWhenApplied(const Hypothesis &hypo, const FFState *ps, ScoreComponentCollection *out) const;
 
-  virtual FFState *EvaluateChart(const ChartHypothesis& hypo, int featureID, ScoreComponentCollection *out) const;
+  virtual FFState *EvaluateWhenApplied(const ChartHypothesis& hypo, int featureID, ScoreComponentCollection *out) const;
 
   virtual bool IsUseable(const FactorMask &mask) const;
 
-	virtual void SetParameter(const std::string& key, const std::string& value);
-	
+  virtual void SetParameter(const std::string& key, const std::string& value);
+
 protected:
   const Factor *m_beginSentenceFactor;
 
@@ -49,17 +49,17 @@ protected:
 
   std::string	m_filePath;
   size_t			m_nGramOrder; //! max n-gram length contained in this LM
-	size_t			m_ContextSize;
+  size_t			m_ContextSize;
 
-	DALM::Logger *m_logger;
-	DALM::Vocabulary *m_vocab;
-	DALM::LM *m_lm;
-	DALM::VocabId wid_start, wid_end;
+  DALM::Logger *m_logger;
+  DALM::Vocabulary *m_vocab;
+  DALM::LM *m_lm;
+  DALM::VocabId wid_start, wid_end;
 
-	mutable std::vector<DALM::VocabId> m_vocabMap;
+  mutable std::vector<DALM::VocabId> m_vocabMap;
 
-	void CreateVocabMapping(const std::string &wordstxt);
-	DALM::VocabId GetVocabId(const Factor *factor) const;
+  void CreateVocabMapping(const std::string &wordstxt);
+  DALM::VocabId GetVocabId(const Factor *factor) const;
 
 private:
   // Convert last words of hypothesis into vocab ids, returning an end pointer.
@@ -77,26 +77,25 @@ private:
     }
   }
 
-	void EvaluateTerminal(
-	  const Word &word,
-	  float &hypoScore,
-  	DALMChartState *newState,
-	  DALM::State &state,
-  	DALM::Fragment *prefixFragments,
-	  unsigned char &prefixLength
-		) const;
+  void EvaluateTerminal(
+    const Word &word,
+    float &hypoScore,
+    DALMChartState *newState,
+    DALM::State &state,
+    DALM::Fragment *prefixFragments,
+    unsigned char &prefixLength
+  ) const;
 
-	void EvaluateNonTerminal(
-	  const Word &word,
-	  float &hypoScore,
-  	DALMChartState *newState,
-	  DALM::State &state,
-  	DALM::Fragment *prefixFragments,
-	  unsigned char &prefixLength,
-	  const DALMChartState *prevState,
-	  size_t prevTargetPhraseLength,
-	  float prevHypoScore
-		) const;
+  void EvaluateNonTerminal(
+    const Word &word,
+    float &hypoScore,
+    DALMChartState *newState,
+    DALM::State &state,
+    DALM::Fragment *prefixFragments,
+    unsigned char &prefixLength,
+    const DALMChartState *prevState,
+    size_t prevTargetPhraseLength
+  ) const;
 };
 
 }

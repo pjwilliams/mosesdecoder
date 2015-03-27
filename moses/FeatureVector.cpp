@@ -214,10 +214,10 @@ void FVector::save(const string& filename) const
   out.close();
 }
 
-void FVector::write(ostream& out) const
+void FVector::write(ostream& out,const string& sep, const string& linesep) const
 {
   for (const_iterator i = cbegin(); i != cend(); ++i) {
-    out << i->first << " " << i->second << endl;
+    out << i->first << sep << i->second << linesep;
   }
 }
 
@@ -383,6 +383,15 @@ void FVector::sparsePlusEquals(const FVector& rhs)
 {
   for (const_iterator i = rhs.cbegin(); i != rhs.cend(); ++i)
     set(i->first, get(i->first) + i->second);
+}
+
+// add only core features
+void FVector::corePlusEquals(const FVector& rhs)
+{
+  if (rhs.m_coreFeatures.size() > m_coreFeatures.size())
+    resize(rhs.m_coreFeatures.size());
+  for (size_t i = 0; i < rhs.m_coreFeatures.size(); ++i)
+    m_coreFeatures[i] += rhs.m_coreFeatures[i];
 }
 
 // assign only core features

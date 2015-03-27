@@ -13,7 +13,7 @@ print STDERR "Training Transliteration Module - Start\n".`date`;
 my $ORDER = 5;
 my $OUT_DIR = "/tmp/Transliteration-Model.$$";
 my $___FACTOR_DELIMITER = "|";
-my ($MOSES_SRC_DIR,$CORPUS_F,$CORPUS_E,$ALIGNMENT,$SRILM_DIR,$FACTOR,$EXTERNAL_BIN_DIR,$INPUT_EXTENSION, $OUTPUT_EXTENSION, $SOURCE_SYNTAX, $TARGET_SYNTAX);
+my ($MOSES_SRC_DIR,$CORPUS_F,$CORPUS_E,$ALIGNMENT,$SRILM_DIR,$FACTOR,$EXTERNAL_BIN_DIR,$INPUT_EXTENSION, $OUTPUT_EXTENSION, $SOURCE_SYNTAX, $TARGET_SYNTAX,$DECODER);
 
 # utilities
 my $ZCAT = "gzip -cd";
@@ -31,8 +31,9 @@ die("ERROR: wrong syntax when invoking train-transliteration-module.perl")
 		       'factor=s' => \$FACTOR,
 		       'srilm-dir=s' => \$SRILM_DIR,
 		       'out-dir=s' => \$OUT_DIR,
-               'source-syntax' => \$SOURCE_SYNTAX,
-               'target-syntax' => \$TARGET_SYNTAX);
+		       'decoder=s' => \$DECODER,
+		       'source-syntax' => \$SOURCE_SYNTAX,
+		       'target-syntax' => \$TARGET_SYNTAX);
 
 # check if the files are in place
 die("ERROR: you need to define --corpus-e, --corpus-f, --alignment, --srilm-dir, --moses-src-dir --external-bin-dir, --input-extension and --output-extension")
@@ -48,8 +49,9 @@ die("ERROR: could not find input corpus file '$CORPUS_F'")
     unless -e $CORPUS_F;
 die("ERROR: could not find output corpus file '$CORPUS_E'")
     unless -e $CORPUS_E;
-die("ERROR: could not find algnment file '$ALIGNMENT'")
+die("ERROR: could not find alignment file '$ALIGNMENT'")
     unless -e $ALIGNMENT;
+$DECODER = "$MOSES_SRC_DIR/bin/moses" unless defined($DECODER);
 
 `mkdir $OUT_DIR`;
 
@@ -178,13 +180,13 @@ sub train_transliteration_module{
 
     `$MOSES_SRC_DIR/scripts/training/train-model.perl -mgiza -mgiza-cpus 10 -dont-zip -first-step 9 -external-bin-dir $EXTERNAL_BIN_DIR -f $INPUT_EXTENSION -e $OUTPUT_EXTENSION -alignment grow-diag-final-and -parts 5 -score-options '--KneserNey' -phrase-translation-table $OUT_DIR/model/phrase-table -config $OUT_DIR/tuning/moses.table.ini -lm 0:3:$OUT_DIR/tuning/moses.table.ini:8`;
 
-    `$MOSES_SRC_DIR/scripts/training/filter-model-given-input.pl $OUT_DIR/tuning/filtered $OUT_DIR/tuning/moses.table.ini $OUT_DIR/tuning/input  -Binarizer "$MOSES_SRC_DIR/bin/processPhraseTable"`;
+    `$MOSES_SRC_DIR/scripts/training/filter-model-given-input.pl $OUT_DIR/tuning/filtered $OUT_DIR/tuning/moses.table.ini $OUT_DIR/tuning/input  -Binarizer "$MOSES_SRC_DIR/bin/CreateOnDiskPt 1 1 4 100 2"`;
 
     `rm $OUT_DIR/tuning/moses.table.ini`;
 
     `$MOSES_SRC_DIR/scripts/ems/support/substitute-filtered-tables.perl $OUT_DIR/tuning/filtered/moses.ini < $OUT_DIR/model/moses.ini > $OUT_DIR/tuning/moses.filtered.ini`;
 
-    `$MOSES_SRC_DIR/scripts/training/mert-moses.pl $OUT_DIR/tuning/input $OUT_DIR/tuning/reference $MOSES_SRC_DIR/bin/moses $OUT_DIR/tuning/moses.filtered.ini --nbest 100 --working-dir $OUT_DIR/tuning/tmp  --decoder-flags "-threads 16 -drop-unknown -v 0 -distortion-limit 0" --rootdir $MOSES_SRC_DIR/scripts -mertdir $MOSES_SRC_DIR/mert -threads=16 --no-filter-phrase-table`;
+    `$MOSES_SRC_DIR/scripts/training/mert-moses.pl $OUT_DIR/tuning/input $OUT_DIR/tuning/reference $DECODER $OUT_DIR/tuning/moses.filtered.ini --nbest 100 --working-dir $OUT_DIR/tuning/tmp  --decoder-flags "-threads 16 -drop-unknown -v 0 -distortion-limit 0" --rootdir $MOSES_SRC_DIR/scripts -mertdir $MOSES_SRC_DIR/mert -threads=16 --no-filter-phrase-table`;
 
     `cp $OUT_DIR/tuning/tmp/moses.ini $OUT_DIR/tuning/moses.ini`;
 

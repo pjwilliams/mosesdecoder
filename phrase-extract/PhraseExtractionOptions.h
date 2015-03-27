@@ -18,7 +18,6 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  ***********************************************************************/
 
-/* Created by Rohit Gupta, CDAC, Mumbai, India on 18 July, 2012*/
 
 #include <string>
 #include <vector>
@@ -73,9 +72,9 @@ public:
     includeSentenceIdFlag(false),
     onlyOutputSpanInfo(false),
     gzOutput(false),
-	flexScoreFlag(false), 
-	debug(false)
-{}
+    flexScoreFlag(false),
+    debug(false) {
+  }
 
   //functions for initialization of options
   void initAllModelsOutputFlag(const bool initallModelsOutputFlag) {

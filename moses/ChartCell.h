@@ -40,6 +40,7 @@
 
 namespace Moses
 {
+class ChartSearchGraphWriter;
 class ChartTranslationOptionList;
 class ChartCellCollection;
 class ChartManager;
@@ -95,8 +96,8 @@ public:
   ChartCell(size_t startPos, size_t endPos, ChartManager &manager);
   ~ChartCell();
 
-  void ProcessSentence(const ChartTranslationOptionList &transOptList
-                       ,const ChartCellCollection &allChartCells);
+  void Decode(const ChartTranslationOptionList &transOptList
+              ,const ChartCellCollection &allChartCells);
 
   //! Get all hypotheses in the cell that have the specified constituent label
   const HypoList *GetSortedHypotheses(const Word &constituentLabel) const {
@@ -124,7 +125,7 @@ public:
     return m_coverage < compare.m_coverage;
   }
 
-  void GetSearchGraph(long translationId, std::ostream &outputSearchGraphStream, const std::map<unsigned,bool> &reachable) const;
+  void WriteSearchGraph(const ChartSearchGraphWriter& writer, const std::map<unsigned,bool> &reachable) const;
 
 };
 

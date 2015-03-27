@@ -7,7 +7,6 @@
 #include "moses/ChartManager.h"
 #include "moses/FactorCollection.h"
 #include "moses/StaticData.h"
-#include "moses/UserMessage.h"
 
 #include <taco/constraint_evaluator.h>
 #include <taco/constraint_set_set.h>
@@ -99,7 +98,7 @@ void ConstraintModel::SetParameter(const std::string &key,
   }
 }
 
-FFState* ConstraintModel::Evaluate(const Hypothesis &, const FFState *,
+FFState* ConstraintModel::EvaluateWhenApplied(const Hypothesis &, const FFState *,
                                    ScoreComponentCollection *) const
 {
   // This feature function cannot be used in the phrase-based decoder.
@@ -107,7 +106,7 @@ FFState* ConstraintModel::Evaluate(const Hypothesis &, const FFState *,
   return 0;
 }
 
-FFState *ConstraintModel::EvaluateChart(
+FFState *ConstraintModel::EvaluateWhenApplied(
     const ChartHypothesis &hypo, int featureID,
     ScoreComponentCollection *accumulator) const
 {

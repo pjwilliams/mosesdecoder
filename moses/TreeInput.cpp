@@ -5,6 +5,7 @@
 #include "Util.h"
 #include "XmlOption.h"
 #include "FactorCollection.h"
+#include "moses/TranslationModel/PhraseDictionary.h"
 
 using namespace std;
 
@@ -28,6 +29,12 @@ bool TreeInput::ProcessAndStripXMLTags(string &line, std::vector<XMLParseOutput>
   // no xml tag? we're done.
   if (line.find_first_of('<') == string::npos) {
     return true;
+  }
+
+  // hack. What pt should XML trans opt be assigned to?
+  PhraseDictionary *firstPt = NULL;
+  if (PhraseDictionary::GetColl().size() == 0) {
+    firstPt = PhraseDictionary::GetColl()[0];
   }
 
   // break up input into a vector of xml tags and text
@@ -148,8 +155,7 @@ bool TreeInput::ProcessAndStripXMLTags(string &line, std::vector<XMLParseOutput>
         if (startPos == endPos) {
           TRACE_ERR("WARNING: tag " << tagName << " span is empty. Ignoring: " << line << endl);
           continue;
-        }
-        else if (startPos > endPos) {
+        } else if (startPos > endPos) {
           TRACE_ERR("ERROR: tag " << tagName << " startPos > endPos: " << line << endl);
           return false;
         }
@@ -173,7 +179,7 @@ bool TreeInput::ProcessAndStripXMLTags(string &line, std::vector<XMLParseOutput>
           //TRACE_ERR("number of translations: " << altTexts.size() << endl);
           for (size_t i=0; i<altTexts.size(); ++i) {
             // set target phrase
-            TargetPhrase targetPhrase;
+            TargetPhrase targetPhrase(firstPt);
             // targetPhrase.CreateFromString(Output, outputFactorOrder,altTexts[i],factorDelimiter, NULL);
             targetPhrase.CreateFromString(Output, outputFactorOrder,altTexts[i], NULL);
 
@@ -189,7 +195,7 @@ bool TreeInput::ProcessAndStripXMLTags(string &line, std::vector<XMLParseOutput>
             Word *targetLHS = new Word(true);
             targetLHS->CreateFromString(Output, outputFactorOrder, targetLHSstr, true);
             UTIL_THROW_IF2(targetLHS->GetFactor(0) == NULL,
-            		"Null factor left-hand-side");
+                           "Null factor left-hand-side");
             targetPhrase.SetTargetLHS(targetLHS);
 
             // not tested
@@ -203,7 +209,7 @@ bool TreeInput::ProcessAndStripXMLTags(string &line, std::vector<XMLParseOutput>
             // convert from prob to log-prob
             float scoreValue = FloorScore(TransformScore(probValue));
             targetPhrase.SetXMLScore(scoreValue);
-            targetPhrase.Evaluate(sourcePhrase);
+            targetPhrase.EvaluateInIsolation(sourcePhrase);
 
             // set span and create XmlOption
             WordsRange range(startPos+1,endPos);
@@ -241,8 +247,8 @@ int TreeInput::Read(std::istream& in,const std::vector<FactorType>& factorOrder)
   // remove extra spaces
   //line = Trim(line);
 
-  std::vector<XMLParseOutput> sourceLabels;
-  ProcessAndStripXMLTags(line, sourceLabels, m_xmlOptions);
+  m_labelledSpans.clear();
+  ProcessAndStripXMLTags(line, m_labelledSpans, m_xmlOptions);
 
   // do words 1st - hack
   stringstream strme;
@@ -260,7 +266,7 @@ int TreeInput::Read(std::istream& in,const std::vector<FactorType>& factorOrder)
 
   // do source labels
   vector<XMLParseOutput>::const_iterator iterLabel;
-  for (iterLabel = sourceLabels.begin(); iterLabel != sourceLabels.end(); ++iterLabel) {
+  for (iterLabel = m_labelledSpans.begin(); iterLabel != m_labelledSpans.end(); ++iterLabel) {
     const XMLParseOutput &labelItem = *iterLabel;
     const WordsRange &range = labelItem.m_range;
     const string &label = labelItem.m_label;
@@ -297,7 +303,7 @@ void TreeInput::AddChartLabel(size_t startPos, size_t endPos, const Word &label
                               , const std::vector<FactorType>& /* factorOrder */)
 {
   UTIL_THROW_IF2(!label.IsNonTerminal(),
-		  "Label must be a non-terminal");
+                 "Label must be a non-terminal");
 
   SourceLabelOverlap overlapType = StaticData::Instance().GetSourceLabelOverlap();
   NonTerminalSet &list = GetLabelSet(startPos, endPos);
@@ -339,7 +345,7 @@ std::ostream& operator<<(std::ostream &out, const TreeInput &input)
       for (iter = labelSet.begin(); iter != labelSet.end(); ++iter) {
         const Word &word = *iter;
         UTIL_THROW_IF2(!word.IsNonTerminal(),
-      		  "Word must be a non-terminal");
+                       "Word must be a non-terminal");
         out << "[" << startPos <<"," << endPos << "]="
             << word << "(" << word.IsNonTerminal() << ") ";
       }

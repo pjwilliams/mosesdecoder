@@ -11,8 +11,8 @@ namespace Moses
 class ConstrainedDecodingState : public FFState
 {
 public:
-  ConstrainedDecodingState()
-  {}
+  ConstrainedDecodingState() {
+  }
 
   ConstrainedDecodingState(const Hypothesis &hypo);
   ConstrainedDecodingState(const ChartHypothesis &hypo);
@@ -41,26 +41,30 @@ public:
     return true;
   }
 
-  void Evaluate(const Phrase &source
-                , const TargetPhrase &targetPhrase
-                , ScoreComponentCollection &scoreBreakdown
-                , ScoreComponentCollection &estimatedFutureScore) const
-  {}
-  
-    void Evaluate(const InputType &input
-                , const InputPath &inputPath
-                , const TargetPhrase &targetPhrase
-                , const StackVec *stackVec
-                , ScoreComponentCollection &scoreBreakdown
-                , ScoreComponentCollection *estimatedFutureScore = NULL) const
-  {}
-  
-  FFState* Evaluate(
+  void EvaluateInIsolation(const Phrase &source
+                           , const TargetPhrase &targetPhrase
+                           , ScoreComponentCollection &scoreBreakdown
+                           , ScoreComponentCollection &estimatedFutureScore) const {
+  }
+
+  void EvaluateWithSourceContext(const InputType &input
+                                 , const InputPath &inputPath
+                                 , const TargetPhrase &targetPhrase
+                                 , const StackVec *stackVec
+                                 , ScoreComponentCollection &scoreBreakdown
+                                 , ScoreComponentCollection *estimatedFutureScore = NULL) const {
+  }
+
+  void EvaluateTranslationOptionListWithSourceContext(const InputType &input
+      , const TranslationOptionList &translationOptionList) const {
+  }
+
+  FFState* EvaluateWhenApplied(
     const Hypothesis& cur_hypo,
     const FFState* prev_state,
     ScoreComponentCollection* accumulator) const;
 
-  FFState* EvaluateChart(
+  FFState* EvaluateWhenApplied(
     const ChartHypothesis& /* cur_hypo */,
     int /* featureID - used to index the state in the previous hypotheses */,
     ScoreComponentCollection* accumulator) const;

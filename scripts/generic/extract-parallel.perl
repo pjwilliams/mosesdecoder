@@ -59,6 +59,7 @@ for (my $i = 8; $i < $#ARGV + 1; ++$i)
   }
   if ($ARGV[$i] eq '--WriteTargetIndices') {
     $targetIndicesFile = $ARGV[++$i];
+    next;
   }
   $phraseOrientation = 1 if $ARGV[$i] eq "--PhraseOrientation";
   if ($ARGV[$i] eq '--PhraseOrientationPriors') {

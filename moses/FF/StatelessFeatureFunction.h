@@ -2,10 +2,14 @@
 
 #include "FeatureFunction.h"
 
-#include "moses/Syntax/SHyperedge.h"
 
 namespace Moses
 {
+
+namespace Syntax
+{
+struct SHyperedge;
+}
 
 /** base class for all stateless feature functions.
  * eg. phrase table, word penalty, phrase penalty
@@ -20,7 +24,7 @@ public:
     return m_statelessFFs;
   }
 
-  StatelessFeatureFunction(const std::string &line);
+  StatelessFeatureFunction(const std::string &line, bool registerNow);
   StatelessFeatureFunction(size_t numScoreComponents, const std::string &line);
 
   /**

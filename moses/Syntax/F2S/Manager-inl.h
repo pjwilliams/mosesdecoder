@@ -1,3 +1,4 @@
+// -*- c++ -*-
 #pragma once
 
 #include "moses/DecodeGraph.h"
@@ -10,7 +11,8 @@
 #include "moses/Syntax/RuleTableFF.h"
 #include "moses/Syntax/SHyperedgeBundle.h"
 #include "moses/Syntax/SVertex.h"
-#include "moses/Syntax/SVertexRecombinationOrderer.h"
+#include "moses/Syntax/SVertexRecombinationEqualityPred.h"
+#include "moses/Syntax/SVertexRecombinationHasher.h"
 #include "moses/Syntax/SymbolEqualityPred.h"
 #include "moses/Syntax/SymbolHasher.h"
 #include "moses/Syntax/T2S/InputTree.h"
@@ -32,19 +34,21 @@ namespace F2S
 {
 
 template<typename RuleMatcher>
-Manager<RuleMatcher>::Manager(const InputType &source)
-  : Syntax::Manager(source)
+Manager<RuleMatcher>::Manager(ttasksptr const& ttask)
+  : Syntax::Manager(ttask)
 {
-  if (const ForestInput *p = dynamic_cast<const ForestInput*>(&source)) {
+  if (const ForestInput *p = dynamic_cast<const ForestInput*>(&m_source)) {
     m_forest = p->GetForest();
     m_rootVertex = p->GetRootVertex();
-  } else if (const TreeInput *p = dynamic_cast<const TreeInput*>(&source)) {
-    T2S::InputTreeBuilder builder;
+    m_sentenceLength = p->GetSize();
+  } else if (const TreeInput *p = dynamic_cast<const TreeInput*>(&m_source)) {
+    T2S::InputTreeBuilder builder(options()->output.factor_order);
     T2S::InputTree tmpTree;
     builder.Build(*p, "Q", tmpTree);
     boost::shared_ptr<Forest> forest = boost::make_shared<Forest>();
     m_rootVertex = T2S::InputTreeToForest(tmpTree, *forest);
     m_forest = forest;
+    m_sentenceLength = p->GetSize();
   } else {
     UTIL_THROW2("ERROR: F2S::Manager requires input to be a tree or forest");
   }
@@ -53,12 +57,10 @@ Manager<RuleMatcher>::Manager(const InputType &source)
 template<typename RuleMatcher>
 void Manager<RuleMatcher>::Decode()
 {
-  const StaticData &staticData = StaticData::Instance();
-
   // Get various pruning-related constants.
-  const std::size_t popLimit = staticData.GetCubePruningPopLimit();
-  const std::size_t ruleLimit = staticData.GetRuleLimit();
-  const std::size_t stackLimit = staticData.GetMaxHypoStackSize();
+  const std::size_t popLimit = options()->cube.pop_limit;
+  const std::size_t ruleLimit = options()->syntax.rule_limit;
+  const std::size_t stackLimit = options()->search.stack_size;
 
   // Initialize the stacks.
   InitializeStacks();
@@ -70,7 +72,7 @@ void Manager<RuleMatcher>::Decode()
   RuleMatcherCallback callback(m_stackMap, ruleLimit);
 
   // Create a glue rule synthesizer.
-  GlueRuleSynthesizer glueRuleSynthesizer(*m_glueRuleTrie);
+  GlueRuleSynthesizer glueRuleSynthesizer(*options(), *m_glueRuleTrie);
 
   // Sort the input forest's vertices into bottom-up topological order.
   std::vector<const Forest::Vertex *> sortedVertices;
@@ -82,8 +84,13 @@ void Manager<RuleMatcher>::Decode()
        p = sortedVertices.begin(); p != sortedVertices.end(); ++p) {
     const Forest::Vertex &vertex = **p;
 
-    // Skip terminal vertices.
+    // Skip terminal vertices (after checking if they are OOVs).
     if (vertex.incoming.empty()) {
+      if (vertex.pvertex.span.GetStartPos() > 0 &&
+          vertex.pvertex.span.GetEndPos() < m_sentenceLength-1 &&
+          IsUnknownSourceWord(vertex.pvertex.symbol)) {
+        m_oovs.insert(vertex.pvertex.symbol);
+      }
       continue;
     }
 
@@ -189,6 +196,21 @@ void Manager<RuleMatcher>::InitializeStacks()
   }
 }
 
+template<typename RuleMatcher>
+bool Manager<RuleMatcher>::IsUnknownSourceWord(const Word &w) const
+{
+  const std::size_t factorId = w[0]->GetId();
+  const std::vector<RuleTableFF*> &ffs = RuleTableFF::Instances();
+  for (std::size_t i = 0; i < ffs.size(); ++i) {
+    RuleTableFF *ff = ffs[i];
+    const boost::unordered_set<std::size_t> &sourceTerms =
+      ff->GetSourceTerminalSet();
+    if (sourceTerms.find(factorId) != sourceTerms.end()) {
+      return false;
+    }
+  }
+  return true;
+}
 
 template<typename RuleMatcher>
 const SHyperedge *Manager<RuleMatcher>::GetBestSHyperedge() const
@@ -231,7 +253,7 @@ void Manager<RuleMatcher>::ExtractKBest(
   // with 0 being 'unlimited.'  This actually sets a large-ish limit in case
   // too many translations are identical.
   const StaticData &staticData = StaticData::Instance();
-  const std::size_t nBestFactor = staticData.GetNBestFactor();
+  const std::size_t nBestFactor = staticData.options()->nbest.factor;
   std::size_t numDerivations = (nBestFactor == 0) ? k*1000 : k*nBestFactor;
 
   // Extract the derivations.
@@ -262,7 +284,9 @@ void Manager<RuleMatcher>::RecombineAndSort(
   // head pointers are updated to point to the vertex instances in the map and
   // any 'duplicate' vertices are deleted.
 // TODO Set?
-  typedef std::map<SVertex *, SVertex *, SVertexRecombinationOrderer> Map;
+  typedef boost::unordered_map<SVertex *, SVertex *,
+          SVertexRecombinationHasher,
+          SVertexRecombinationEqualityPred> Map;
   Map map;
   for (std::vector<SHyperedge*>::const_iterator p = buffer.begin();
        p != buffer.end(); ++p) {
@@ -278,7 +302,7 @@ void Manager<RuleMatcher>::RecombineAndSort(
     // Compare the score of h against the score of the best incoming hyperedge
     // for the stored vertex.
     SVertex *storedVertex = result.first->second;
-    if (h->label.score > storedVertex->best->label.score) {
+    if (h->label.futureScore > storedVertex->best->label.futureScore) {
       // h's score is better.
       storedVertex->recombined.push_back(storedVertex->best);
       storedVertex->best = h;

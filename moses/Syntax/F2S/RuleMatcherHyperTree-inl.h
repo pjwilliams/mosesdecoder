@@ -51,8 +51,8 @@ void RuleMatcherHyperTree<Callback>::EnumerateHyperedges(
         m_hyperedge.label.inputWeight += (*p)->weight;
       }
       // Set the output hyperedge label's translation set pointer.
-      m_hyperedge.label.translations =
-        &(item.trieNode->GetTargetPhraseCollection());
+      m_hyperedge.label.translations
+      = item.trieNode->GetTargetPhraseCollection();
       // Pass the output hyperedge to the callback.
       callback(m_hyperedge);
     }
@@ -190,8 +190,9 @@ int RuleMatcherHyperTree<Callback>::SubSeqLength(const HyperPath::NodeSeq &seq,
     int pos)
 {
   int length = 0;
-  while (pos != seq.size() && seq[pos] != HyperPath::kComma) {
-    ++pos;
+  HyperPath::NodeSeq::size_type curpos = pos;
+  while (curpos != seq.size() && seq[curpos] != HyperPath::kComma) {
+    ++curpos;
     ++length;
   }
   return length;

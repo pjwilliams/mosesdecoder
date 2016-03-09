@@ -16,9 +16,9 @@ class SkeletonPT : public PhraseDictionary
 public:
   SkeletonPT(const std::string &line);
 
-  void Load();
+  void Load(AllOptions::ptr const& opts);
 
-  void InitializeForInput(InputType const& source);
+  void InitializeForInput(ttasksptr const& ttask);
 
   // for phrase-based model
   void GetTargetPhraseCollectionBatch(const InputPathList &inputPathQueue) const;

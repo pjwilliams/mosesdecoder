@@ -24,7 +24,7 @@ public:
 
   void operator()(const InputType &input
                   , const InputPath &inputPath
-                  , const WordsRange &sourceRange
+                  , const Range &sourceRange
                   , Discriminative::Classifier &classifier) const {
     const Features& features = *m_tls.GetStored();
     for (size_t i = 0; i < features.size(); i++) {
@@ -39,7 +39,8 @@ public:
       VWFeatureSource::SetParameter(key, value);
   }
 
-  virtual void InitializeForInput(InputType const& source) {
+  virtual void InitializeForInput(ttasksptr const& ttask) {
+    InputType const& source = *(ttask->GetSource().get());
     UTIL_THROW_IF2(source.GetType() != TabbedSentenceInput,
                    "This feature function requires the TabbedSentence input type");
 

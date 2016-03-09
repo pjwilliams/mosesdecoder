@@ -27,7 +27,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include <vector>
 
 #include <boost/shared_ptr.hpp>
- 
+
 #ifdef WITH_THREADS
 #include <boost/bind.hpp>
 #include <boost/thread.hpp>
@@ -53,9 +53,6 @@ class Task
 {
 public:
   virtual void Run() = 0;
-  virtual bool DeleteAfterExecution() {
-    return true;
-  }
   virtual ~Task() {}
 };
 

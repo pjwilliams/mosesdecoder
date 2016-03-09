@@ -19,8 +19,7 @@ License along with this library; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 ***********************************************************************/
 
-#ifndef moses_Util_h
-#define moses_Util_h
+#pragma once
 
 #include <iostream>
 #include <fstream>
@@ -34,6 +33,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include <cstdlib>
 #include <cstring>
 #include "util/exception.hh"
+#include "util/string_stream.hh"
 #include "TypeDef.h"
 
 namespace Moses
@@ -72,7 +72,7 @@ namespace Moses
 #ifdef IFVERBOSE
 #undef IFVERBOSE
 #endif
-#define IFVERBOSE(level) if (StaticData::Instance().GetVerboseLevel() >= level)
+#define IFVERBOSE(level) if (Moses::StaticData::Instance().GetVerboseLevel() >= level)
 #define XVERBOSE(level,str) VERBOSE(level, "[" << HERE << "] " << str)
 #define HERE __FILE__ << ":" << __LINE__
 #define FEATUREVERBOSE(level,str) FEATUREVERBOSE2(level, "[" << GetScoreProducerDescription() << "] " << str)
@@ -89,9 +89,16 @@ namespace Moses
 #define NTH_ELEMENT4(begin, middle, end, orderer) std::nth_element(begin, middle, end, orderer)
 #endif
 
-//! delete white spaces at beginning and end of string
-const std::string Trim(const std::string& str, const std::string dropChars = " \t\n\r");
+
 const std::string ToLower(const std::string& str);
+
+//! delete white spaces at beginning and end of string
+inline std::string Trim(const std::string& str, const std::string dropChars = " \t\n\r")
+{
+  std::string res = str;
+  res.erase(str.find_last_not_of(dropChars)+1);
+  return res.erase(0, res.find_first_not_of(dropChars));
+}
 
 //! get string representation of any object/variable, as long as it can pipe to a stream
 template<typename T>
@@ -337,7 +344,7 @@ inline std::vector<std::string> TokenizeFirstOnly(const std::string& str,
 template <typename T>
 std::string Join(const std::string& delimiter, const std::vector<T>& items)
 {
-  std::ostringstream outstr;
+  util::StringStream outstr;
   if(items.size() == 0) return "";
   outstr << items[0];
   for(unsigned int i = 1; i < items.size(); i++)
@@ -351,7 +358,7 @@ std::string Join(const std::string& delimiter, const std::vector<T>& items)
 template<typename It>
 std::string Join(const std::string &delim, It begin, It end)
 {
-  std::ostringstream outstr;
+  util::StringStream outstr;
   if (begin != end)
     outstr << *begin++;
   for ( ; begin != end; ++begin)
@@ -421,7 +428,7 @@ inline float CalcTranslationScore(const std::vector<float> &probVector,
 		out << *this;								\
 		return out.str();						\
 	}															\
- 
+
 //! delete and remove every element of a collection object such as set, list etc
 template<class COLL>
 void RemoveAllInColl(COLL &coll)
@@ -458,11 +465,6 @@ inline void ShrinkToFit(T& v)
 }
 
 bool FileExists(const std::string& filePath);
-
-// A couple of utilities to measure decoding time
-void ResetUserTime();
-void PrintUserTime(const std::string &message);
-double GetUserTime();
 
 // dump SGML parser for <dlt> tags
 std::vector< std::map<std::string, std::string> > ProcessAndStripDLT(std::string &line);
@@ -502,13 +504,11 @@ inline std::string GetFirstString(const std::string& str, int& first_pos,  const
 template<class T>
 T log_sum (T log_a, T log_b)
 {
-  T v;
   if (log_a < log_b) {
-    v = log_b+log ( 1 + exp ( log_a-log_b ));
+    return log_b + log1p(exp(log_a - log_b));
   } else {
-    v = log_a+log ( 1 + exp ( log_b-log_a ));
+    return log_a + log1p(exp(log_b - log_a));
   }
-  return ( v );
 }
 
 /**
@@ -532,7 +532,27 @@ class FeatureFunction;
 void PrintFeatureWeight(const FeatureFunction* ff);
 void ShowWeights();
 
+template<typename T>
+class UnorderedComparer
+{
+public:
+  size_t operator()(const T& obj) const {
+    return obj.hash();
+  }
+
+  bool operator()(const T& a, const T& b) const {
+    return a == b;
+  }
+
+  size_t operator()(const T* obj) const {
+    return obj->hash();
+  }
+
+  bool operator()(const T* a, const T* b) const {
+    return (*a) == (*b);
+  }
+
+};
 
 } // namespace
 
-#endif

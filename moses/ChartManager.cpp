@@ -19,7 +19,7 @@
  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  ***********************************************************************/
 
-#include <stdio.h>
+#include <cstdio>
 #include "ChartManager.h"
 #include "ChartCell.h"
 #include "ChartHypothesis.h"
@@ -34,24 +34,26 @@
 #include "moses/OutputCollector.h"
 #include "moses/ChartKBestExtractor.h"
 #include "moses/HypergraphOutput.h"
+#include "moses/TranslationTask.h"
 
 using namespace std;
 
 namespace Moses
 {
+
 extern bool g_mosesDebug;
 
 /* constructor. Initialize everything prior to decoding a particular sentence.
  * \param source the sentence to be decoded
  * \param system which particular set of models to use.
  */
-ChartManager::ChartManager(InputType const& source)
-  :BaseManager(source)
-  ,m_hypoStackColl(source, *this)
-  ,m_start(clock())
-  ,m_hypothesisId(0)
-  ,m_parser(source, m_hypoStackColl)
-  ,m_translationOptionList(StaticData::Instance().GetRuleLimit(), source)
+ChartManager::ChartManager(ttasksptr const& ttask)
+  : BaseManager(ttask)
+  , m_hypoStackColl(m_source, *this)
+  , m_start(clock())
+  , m_hypothesisId(0)
+  , m_parser(ttask, m_hypoStackColl)
+  , m_translationOptionList(ttask->options()->syntax.rule_limit, m_source)
 {
   const CM::ConstraintModel *cm = StaticData::Instance().GetConstraintModel();
   if (cm) {
@@ -71,6 +73,7 @@ ChartManager::~ChartManager()
 //! decode the sentence. This contains the main laps. Basically, the CKY++ algorithm
 void ChartManager::Decode()
 {
+
   VERBOSE(1,"Translating: " << m_source << endl);
 
   ResetSentenceStats(m_source);
@@ -85,12 +88,12 @@ void ChartManager::Decode()
   for (int startPos = size-1; startPos >= 0; --startPos) {
     for (size_t width = 1; width <= size-startPos; ++width) {
       size_t endPos = startPos + width - 1;
-      WordsRange range(startPos, endPos);
+      Range range(startPos, endPos);
 
       // create trans opt
       m_translationOptionList.Clear();
       m_parser.Create(range, m_translationOptionList);
-      m_translationOptionList.ApplyThreshold();
+      m_translationOptionList.ApplyThreshold(options()->search.trans_opt_threshold);
 
       const InputPath &inputPath = m_parser.GetInputPath(range);
       m_translationOptionList.EvaluateWithSourceContext(m_source, inputPath);
@@ -118,7 +121,7 @@ void ChartManager::Decode()
         cerr << "  ";
       }
       for (size_t startPos = 0; startPos <= size-width; ++startPos) {
-        WordsRange range(startPos, startPos+width-1);
+        Range range(startPos, startPos+width-1);
         cerr.width(3);
         cerr << m_hypoStackColl.Get(range).GetSize() << " ";
       }
@@ -133,19 +136,18 @@ void ChartManager::Decode()
  */
 void ChartManager::AddXmlChartOptions()
 {
-  // const StaticData &staticData = StaticData::Instance();
-
-  const std::vector <ChartTranslationOptions*> xmlChartOptionsList = m_source.GetXmlChartTranslationOptions();
+  const std::vector <ChartTranslationOptions*> xmlChartOptionsList
+  = m_source.GetXmlChartTranslationOptions();
   IFVERBOSE(2) {
     cerr << "AddXmlChartOptions " << xmlChartOptionsList.size() << endl;
   }
   if (xmlChartOptionsList.size() == 0) return;
 
-  for(std::vector<ChartTranslationOptions*>::const_iterator i = xmlChartOptionsList.begin();
-      i != xmlChartOptionsList.end(); ++i) {
+  typedef std::vector<ChartTranslationOptions*>::const_iterator citer;
+  for(citer i = xmlChartOptionsList.begin(); i != xmlChartOptionsList.end(); ++i) {
     ChartTranslationOptions* opt = *i;
 
-    const WordsRange &range = opt->GetSourceWordsRange();
+    const Range &range = opt->GetSourceWordsRange();
 
     RuleCubeItem* item = new RuleCubeItem( *opt, m_hypoStackColl );
     ChartHypothesis* hypo = new ChartHypothesis(*opt, *item, *this);
@@ -165,7 +167,7 @@ const ChartHypothesis *ChartManager::GetBestHypothesis() const
   if (size == 0) // empty source
     return NULL;
   else {
-    WordsRange range(0, size-1);
+    Range range(0, size-1);
     const ChartCell &lastCell = m_hypoStackColl.Get(range);
     return lastCell.GetBestHypothesis();
   }
@@ -188,7 +190,7 @@ void ChartManager::CalcNBest(
   }
 
   // Get the list of top-level hypotheses, sorted by score.
-  WordsRange range(0, m_source.GetSize()-1);
+  Range range(0, m_source.GetSize()-1);
   const ChartCell &lastCell = m_hypoStackColl.Get(range);
   boost::scoped_ptr<const std::vector<const ChartHypothesis*> > topLevelHypos(
     lastCell.GetAllSortedHypotheses());
@@ -209,8 +211,7 @@ void ChartManager::CalcNBest(
   // than n.  The n-best factor determines how much bigger the limit should be,
   // with 0 being 'unlimited.'  This actually sets a large-ish limit in case
   // too many translations are identical.
-  const StaticData &staticData = StaticData::Instance();
-  const std::size_t nBestFactor = staticData.GetNBestFactor();
+  const std::size_t nBestFactor = options()->nbest.factor;
   std::size_t numDerivations = (nBestFactor == 0) ? n*1000 : n*nBestFactor;
 
   // Extract the derivations.
@@ -237,7 +238,7 @@ void ChartManager::WriteSearchGraph(const ChartSearchGraphWriter& writer) const
 
   // which hypotheses are reachable?
   std::map<unsigned,bool> reachable;
-  WordsRange fullRange(0, size-1);
+  Range fullRange(0, size-1);
   const ChartCell &lastCell = m_hypoStackColl.Get(fullRange);
   const ChartHypothesis *hypo = lastCell.GetBestHypothesis();
 
@@ -254,7 +255,7 @@ void ChartManager::WriteSearchGraph(const ChartSearchGraphWriter& writer) const
   for (size_t width = 1; width <= size; ++width) {
     for (size_t startPos = 0; startPos <= size-width; ++startPos) {
       size_t endPos = startPos + width - 1;
-      WordsRange range(startPos, endPos);
+      Range range(startPos, endPos);
       TRACE_ERR(" " << range << "=");
 
       const ChartCell &cell = m_hypoStackColl.Get(range);
@@ -294,15 +295,18 @@ void ChartManager::FindReachableHypotheses(
   }
 }
 
-void ChartManager::OutputSearchGraphAsHypergraph(std::ostream &outputSearchGraphStream) const
+void
+ChartManager::
+OutputSearchGraphAsHypergraph(std::ostream& out) const
 {
-  ChartSearchGraphWriterHypergraph writer(&outputSearchGraphStream);
+  ChartSearchGraphWriterHypergraph writer(options(), &out);
   WriteSearchGraph(writer);
 }
 
 void ChartManager::OutputSearchGraphMoses(std::ostream &outputSearchGraphStream) const
 {
-  ChartSearchGraphWriterMoses writer(&outputSearchGraphStream, m_source.GetTranslationId());
+  ChartSearchGraphWriterMoses writer(options(), &outputSearchGraphStream,
+                                     m_source.GetTranslationId());
   WriteSearchGraph(writer);
 }
 
@@ -318,14 +322,14 @@ void ChartManager::OutputBest(OutputCollector *collector) const
 
 void ChartManager::OutputNBest(OutputCollector *collector) const
 {
-  const StaticData &staticData = StaticData::Instance();
-  size_t nBestSize = staticData.GetNBestSize();
+  size_t nBestSize = options()->nbest.nbest_size;
   if (nBestSize > 0) {
     const size_t translationId = m_source.GetTranslationId();
 
-    VERBOSE(2,"WRITING " << nBestSize << " TRANSLATION ALTERNATIVES TO " << staticData.GetNBestFilePath() << endl);
+    VERBOSE(2,"WRITING " << nBestSize << " TRANSLATION ALTERNATIVES TO "
+            << options()->nbest.output_file_path << endl);
     std::vector<boost::shared_ptr<ChartKBestExtractor::Derivation> > nBestList;
-    CalcNBest(nBestSize, nBestList,staticData.GetDistinctNBest());
+    CalcNBest(nBestSize, nBestList, options()->nbest.only_distinct);
     OutputNBestList(collector, nBestList, translationId);
     IFVERBOSE(2) {
       PrintUserTime("N-Best Hypotheses Generation Time:");
@@ -338,9 +342,6 @@ void ChartManager::OutputNBestList(OutputCollector *collector,
                                    const ChartKBestExtractor::KBestVec &nBestList,
                                    long translationId) const
 {
-  const StaticData &staticData = StaticData::Instance();
-  const std::vector<Moses::FactorType> &outputFactorOrder = staticData.GetOutputFactorOrder();
-
   std::ostringstream out;
 
   if (collector->OutputIsCout()) {
@@ -349,10 +350,9 @@ void ChartManager::OutputNBestList(OutputCollector *collector,
     FixPrecision(out);
   }
 
-  bool includeWordAlignment =
-    StaticData::Instance().PrintAlignmentInfoInNbest();
-
-  bool PrintNBestTrees = StaticData::Instance().PrintNBestTrees();
+  NBestOptions const& nbo = options()->nbest;
+  bool includeWordAlignment = nbo.include_alignment_info;
+  bool PrintNBestTrees = nbo.print_trees;
 
   for (ChartKBestExtractor::KBestVec::const_iterator p = nBestList.begin();
        p != nBestList.end(); ++p) {
@@ -369,10 +369,11 @@ void ChartManager::OutputNBestList(OutputCollector *collector,
 
     // print the translation ID, surface factors, and scores
     out << translationId << " ||| ";
-    OutputSurface(out, outputPhrase, outputFactorOrder, false);
+    OutputSurface(out, outputPhrase); // , outputFactorOrder, false);
     out << " ||| ";
     boost::shared_ptr<ScoreComponentCollection> scoreBreakdown = ChartKBestExtractor::GetOutputScoreBreakdown(derivation);
-    scoreBreakdown->OutputAllFeatureScores(out);
+    bool with_labels = options()->nbest.include_feature_labels;
+    scoreBreakdown->OutputAllFeatureScores(out, with_labels);
     out << " ||| " << derivation.score;
 
     // optionally, print word alignments
@@ -617,13 +618,11 @@ void ChartManager::OutputDetailedTranslationReport(
   collector->Write(translationId, out.str());
 
   //DIMw
-  const StaticData &staticData = StaticData::Instance();
-
-  if (staticData.IsDetailedAllTranslationReportingEnabled()) {
-    const Sentence &sentence = dynamic_cast<const Sentence &>(m_source);
-    size_t nBestSize = staticData.GetNBestSize();
+  if (options()->output.detailed_all_transrep_filepath.size()) {
+    const Sentence &sentence = static_cast<const Sentence &>(m_source);
+    size_t nBestSize = options()->nbest.nbest_size;
     std::vector<boost::shared_ptr<ChartKBestExtractor::Derivation> > nBestList;
-    CalcNBest(nBestSize, nBestList, staticData.GetDistinctNBest());
+    CalcNBest(nBestSize, nBestList, options()->nbest.only_distinct);
     OutputDetailedAllTranslationReport(collector, nBestList, sentence, translationId);
   }
 
@@ -662,7 +661,7 @@ void ChartManager::OutputTranslationOption(std::ostream &out,
   WriteApplicationContext(out, applicationContext);
   out << ": " << hypo->GetCurrTargetPhrase().GetTargetLHS()
       << "->" << hypo->GetCurrTargetPhrase()
-      << " " << hypo->GetTotalScore() << hypo->GetScoreBreakdown();
+      << " " << hypo->GetFutureScore() << hypo->GetScoreBreakdown();
 }
 
 // Given a hypothesis and sentence, reconstructs the 'application context' --
@@ -675,18 +674,18 @@ void ChartManager::ReconstructApplicationContext(const ChartHypothesis &hypo,
   const std::vector<const ChartHypothesis*> &prevHypos = hypo.GetPrevHypos();
   std::vector<const ChartHypothesis*>::const_iterator p = prevHypos.begin();
   std::vector<const ChartHypothesis*>::const_iterator end = prevHypos.end();
-  const WordsRange &span = hypo.GetCurrSourceRange();
+  const Range &span = hypo.GetCurrSourceRange();
   size_t i = span.GetStartPos();
   while (i <= span.GetEndPos()) {
     if (p == end || i < (*p)->GetCurrSourceRange().GetStartPos()) {
       // Symbol is a terminal.
       const Word &symbol = sentence.GetWord(i);
-      context.push_back(std::make_pair(symbol, WordsRange(i, i)));
+      context.push_back(std::make_pair(symbol, Range(i, i)));
       ++i;
     } else {
       // Symbol is a non-terminal.
       const Word &symbol = (*p)->GetTargetLHS();
-      const WordsRange &range = (*p)->GetCurrSourceRange();
+      const Range &range = (*p)->GetCurrSourceRange();
       context.push_back(std::make_pair(symbol, range));
       i = range.GetEndPos()+1;
       ++p;
@@ -721,18 +720,19 @@ void ChartManager::OutputDetailedTreeFragmentsTranslationReport(OutputCollector 
   std::ostringstream out;
   ApplicationContext applicationContext;
 
-  const Sentence &sentence = dynamic_cast<const Sentence &>(m_source);
+  const Sentence &sentence = static_cast<const Sentence &>(m_source);
   const size_t translationId = m_source.GetTranslationId();
 
   OutputTreeFragmentsTranslationOptions(out, applicationContext, hypo, sentence, translationId);
 
   //Tree of full sentence
-  const StatefulFeatureFunction* treeStructure = StaticData::Instance().GetTreeStructure();
+  const StatefulFeatureFunction* treeStructure;
+  treeStructure = StaticData::Instance().GetTreeStructure();
   if (treeStructure != NULL) {
     const vector<const StatefulFeatureFunction*>& sff = StatefulFeatureFunction::GetStatefulFeatureFunctions();
     for( size_t i=0; i<sff.size(); i++ ) {
       if (sff[i] == treeStructure) {
-        const TreeState* tree = dynamic_cast<const TreeState*>(hypo->GetFFState(i));
+        const TreeState* tree = static_cast<const TreeState*>(hypo->GetFFState(i));
         out << "Full Tree " << translationId << ": " << tree->GetTree()->GetString() << "\n";
         break;
       }
@@ -798,7 +798,7 @@ void ChartManager::OutputDetailedAllTranslationReport(
   for (size_t width = 1; width <= size; ++width) {
     for (size_t startPos = 0; startPos <= size-width; ++startPos) {
       size_t endPos = startPos + width - 1;
-      WordsRange range(startPos, endPos);
+      Range range(startPos, endPos);
       const ChartCell& cell = cells.Get(range);
       const HypoList* hyps = cell.GetAllSortedHypotheses();
       out << "Chart Cell [" << startPos << ".." << endPos << "]" << endl;
@@ -815,15 +815,6 @@ void ChartManager::OutputDetailedAllTranslationReport(
   collector->Write(translationId, out.str());
 }
 
-void ChartManager::OutputSearchGraphHypergraph() const
-{
-  const StaticData &staticData = StaticData::Instance();
-  if (staticData.GetOutputSearchGraphHypergraph()) {
-    HypergraphOutput<ChartManager> hypergraphOutputChart(PRECISION);
-    hypergraphOutputChart.Write(*this);
-  }
-}
-
 void ChartManager::OutputBestHypo(OutputCollector *collector, const ChartHypothesis *hypo, long translationId) const
 {
   if (!collector)
@@ -836,11 +827,11 @@ void ChartManager::OutputBestHypo(OutputCollector *collector, const ChartHypothe
     Backtrack(hypo);
     VERBOSE(3,"0" << std::endl);
 
-    if (StaticData::Instance().GetOutputHypoScore()) {
-      out << hypo->GetTotalScore() << " ";
+    if (options()->output.ReportHypoScore) {
+      out << hypo->GetFutureScore() << " ";
     }
 
-    if (StaticData::Instance().IsPathRecoveryEnabled()) {
+    if (options()->output.RecoverPath) {
       out << "||| ";
     }
     Phrase outPhrase(ARRAY_SIZE_INCR);
@@ -853,13 +844,12 @@ void ChartManager::OutputBestHypo(OutputCollector *collector, const ChartHypothe
     outPhrase.RemoveWord(0);
     outPhrase.RemoveWord(outPhrase.GetSize() - 1);
 
-    const std::vector<FactorType> outputFactorOrder = StaticData::Instance().GetOutputFactorOrder();
-    string output = outPhrase.GetStringRep(outputFactorOrder);
+    string output = outPhrase.GetStringRep(options()->output.factor_order);
     out << output << endl;
   } else {
     VERBOSE(1, "NO BEST TRANSLATION" << endl);
 
-    if (StaticData::Instance().GetOutputHypoScore()) {
+    if (options()->output.ReportHypoScore) {
       out << "0 ";
     }
 

@@ -2,6 +2,7 @@
 
 #include <string>
 #include <limits>
+#include <set>
 #include <boost/unordered_map.hpp>
 #include "StatelessFeatureFunction.h"
 #include "moses/Factor.h"
@@ -17,7 +18,7 @@ class Model1Vocabulary
 {
 public:
 
-  #define INVALID_ID std::numeric_limits<unsigned>::max() // UINT_MAX
+#define INVALID_ID std::numeric_limits<unsigned>::max() // UINT_MAX
   static const std::string GIZANULL;
 
   Model1Vocabulary();
@@ -37,7 +38,7 @@ protected:
 class Model1LexicalTable
 {
 public:
-  Model1LexicalTable(float floor=1e-7) : m_floor(floor) 
+  Model1LexicalTable(float floor=1e-7) : m_floor(floor)
   {}
 
   void Load(const std::string& fileName, const Model1Vocabulary& vcbS, const Model1Vocabulary& vcbT);
@@ -66,7 +67,7 @@ public:
   void EvaluateInIsolation(const Phrase &source
                            , const TargetPhrase &targetPhrase
                            , ScoreComponentCollection &scoreBreakdown
-                           , ScoreComponentCollection &estimatedFutureScore) const
+                           , ScoreComponentCollection &estimatedScores) const
   {};
 
   void EvaluateWithSourceContext(const InputType &input
@@ -74,7 +75,7 @@ public:
                                  , const TargetPhrase &targetPhrase
                                  , const StackVec *stackVec
                                  , ScoreComponentCollection &scoreBreakdown
-                                 , ScoreComponentCollection *estimatedFutureScore = NULL) const;
+                                 , ScoreComponentCollection *estimatedScores = NULL) const;
 
   void EvaluateTranslationOptionListWithSourceContext(const InputType &input
       , const TranslationOptionList &translationOptionList) const
@@ -98,15 +99,17 @@ private:
   std::string m_fileNameModel1;
   Model1LexicalTable m_model1;
   const Factor* m_emptyWord;
+  std::set<const Factor*> m_punctuation;
+  bool m_is_syntax;
 
-  void Load();
-  
+  void Load(AllOptions::ptr const& opts);
+
   // cache
   mutable boost::unordered_map<const InputType*, boost::unordered_map<const Factor*, float> > m_cache;
-  #ifdef WITH_THREADS
+#ifdef WITH_THREADS
   // reader-writer lock
   mutable boost::shared_mutex m_accessLock;
-  #endif
+#endif
 };
 
 

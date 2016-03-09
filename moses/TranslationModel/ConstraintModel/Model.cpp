@@ -28,7 +28,7 @@ namespace CM
 {
 
 ConstraintModel::ConstraintModel(const std::string &line)
-    : StatefulFeatureFunction(line)
+    : StatefulFeatureFunction(line, true)
     , m_featureId(-1)
 {
   std::cerr << "Creating constraint model..." << std::endl;

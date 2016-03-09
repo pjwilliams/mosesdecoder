@@ -4,6 +4,7 @@
 #include <map>
 #include "StatefulFeatureFunction.h"
 #include "FFState.h"
+#include "moses/Word.h"
 #include "InternalTree.h"
 
 namespace Moses
@@ -35,11 +36,18 @@ class TreeStructureFeature : public StatefulFeatureFunction
   SyntaxConstraints* m_constraints;
   LabelSet* m_labelset;
   bool m_binarized;
+  Word m_send;
+  Word m_send_nt;
+
 public:
   TreeStructureFeature(const std::string &line)
     :StatefulFeatureFunction(0, line)
     , m_binarized(false) {
     ReadParameters();
+    std::vector<FactorType> factors;
+    factors.push_back(0);
+    m_send.CreateFromString(Output, factors, "</s>", false);
+    m_send_nt.CreateFromString(Output, factors, "SEND", true);
   }
   ~TreeStructureFeature() {
     delete m_constraints;
@@ -49,29 +57,11 @@ public:
     return new TreeState(TreePointer());
   }
 
-  void AddNTLabels(TreePointer root) const;
-
   bool IsUseable(const FactorMask &mask) const {
     return true;
   }
 
   void SetParameter(const std::string& key, const std::string& value);
-
-  void EvaluateInIsolation(const Phrase &source
-                           , const TargetPhrase &targetPhrase
-                           , ScoreComponentCollection &scoreBreakdown
-                           , ScoreComponentCollection &estimatedFutureScore) const {};
-  void EvaluateWithSourceContext(const InputType &input
-                                 , const InputPath &inputPath
-                                 , const TargetPhrase &targetPhrase
-                                 , const StackVec *stackVec
-                                 , ScoreComponentCollection &scoreBreakdown
-                                 , ScoreComponentCollection *estimatedFutureScore = NULL) const {};
-
-  void EvaluateTranslationOptionListWithSourceContext(const InputType &input
-      , const TranslationOptionList &translationOptionList) const {
-  }
-
 
   FFState* EvaluateWhenApplied(
     const Hypothesis& cur_hypo,
@@ -84,7 +74,7 @@ public:
     int /* featureID - used to index the state in the previous hypotheses */,
     ScoreComponentCollection* accumulator) const;
 
-  void Load();
+  void Load(AllOptions::ptr const& opts);
 };
 
 

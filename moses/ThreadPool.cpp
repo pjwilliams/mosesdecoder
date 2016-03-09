@@ -55,11 +55,7 @@ void ThreadPool::Execute()
     }
     //Execute job
     if (task) {
-      // must read from task before run. otherwise task may be deleted by main thread
-      // race condition
-      bool del = task->DeleteAfterExecution();
       task->Run();
-      // if (del) delete task; // not needed any more, since we use shared ptrs.
     }
     m_threadAvailable.notify_all();
   } while (!m_stopped);

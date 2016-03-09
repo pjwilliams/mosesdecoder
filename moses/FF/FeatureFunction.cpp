@@ -6,6 +6,7 @@
 #include "moses/Hypothesis.h"
 #include "moses/Manager.h"
 #include "moses/TranslationOption.h"
+#include "moses/TranslationTask.h"
 #include "moses/Util.h"
 #include "moses/FF/DistortionScoreProducer.h"
 
@@ -37,57 +38,45 @@ void FeatureFunction::Destroy()
   RemoveAllInColl(s_staticColl);
 }
 
-// The original declaration as 
-// void FeatureFunction::CallChangeSource(InputType *&input)
-// had me a bit perplexed. Would you really want to allow 
-// any feature function to replace the InputType behind the 
-// back of the others? And change what the vector is pointing to?
-
-void FeatureFunction::CallChangeSource(InputType * const&input)
-{
-  for (size_t i = 0; i < s_staticColl.size(); ++i) {
-    const FeatureFunction &ff = *s_staticColl[i];
-    ff.ChangeSource(input);
-  }
-}
-
 void FeatureFunction::SetupAll(TranslationTask const& ttask)
 {
   BOOST_FOREACH(FeatureFunction* ff, s_staticColl)
-    ff->Setup(ttask);
+  ff->Setup(ttask);
 }
 
 FeatureFunction::
-FeatureFunction(const std::string& line)
+FeatureFunction(const std::string& line, bool registerNow)
   : m_tuneable(true)
   , m_requireSortingAfterSourceContext(false)
   , m_verbosity(std::numeric_limits<std::size_t>::max())
   , m_numScoreComponents(1)
+  , m_index(0)
 {
   m_numTuneableComponents = m_numScoreComponents;
-  Initialize(line);
+  ParseLine(line);
+  // if (registerNow) Register(); // now done in FeatureFactory::DefaultSetup()
+  // TO DO: eliminate the registerNow parameter
 }
 
-FeatureFunction::
-FeatureFunction(size_t numScoreComponents,
-                const std::string& line)
+FeatureFunction::FeatureFunction(size_t numScoreComponents, const std::string& line, bool registerNow)
   : m_tuneable(true)
   , m_requireSortingAfterSourceContext(false)
   , m_verbosity(std::numeric_limits<std::size_t>::max())
   , m_numScoreComponents(numScoreComponents)
+  , m_index(0)
 {
   m_numTuneableComponents = m_numScoreComponents;
-  Initialize(line);
+  ParseLine(line);
+  // if (registerNow) Register(); // now done in FeatureFactory::DefaultSetup()
+  // TO DO: eliminate the registerNow parameter
 }
 
 void
 FeatureFunction::
-Initialize(const std::string &line)
+Register(FeatureFunction* ff)
 {
-  ParseLine(line);
-
-  ScoreComponentCollection::RegisterScoreProducer(this);
-  s_staticColl.push_back(this);
+  ScoreComponentCollection::RegisterScoreProducer(ff);
+  s_staticColl.push_back(ff);
 }
 
 FeatureFunction::~FeatureFunction() {}
@@ -123,12 +112,10 @@ void FeatureFunction::ParseLine(const std::string &line)
   if (m_description == "") {
     size_t index = description_counts.count(nameStub);
 
-    ostringstream dstream;
-    dstream << nameStub;
-    dstream << index;
+    string descr = SPrint(nameStub) + SPrint(index);
 
     description_counts.insert(nameStub);
-    m_description = dstream.str();
+    m_description = descr;
   }
 
 }
@@ -163,7 +150,8 @@ void FeatureFunction::ReadParameters()
 
 std::vector<float> FeatureFunction::DefaultWeights() const
 {
-  UTIL_THROW2(GetScoreProducerDescription() << ": No default weights");
+  return std::vector<float>(this->m_numScoreComponents,1.0);
+  // UTIL_THROW2(GetScoreProducerDescription() << ": No default weights");
 }
 
 void FeatureFunction::SetTuneableComponents(const std::string& value)
@@ -184,6 +172,38 @@ void FeatureFunction::SetTuneableComponents(const std::string& value)
       --m_numTuneableComponents;
     }
   }
+}
+
+// void
+// FeatureFunction
+// ::InitializeForInput(ttasksptr const& ttask)
+// {
+//   InitializeForInput(*(ttask->GetSource().get()));
+// }
+
+void
+FeatureFunction
+::CleanUpAfterSentenceProcessing(ttasksptr const& ttask)
+{
+  CleanUpAfterSentenceProcessing(*(ttask->GetSource().get()));
+}
+
+size_t
+FeatureFunction
+::GetIndex() const
+{
+  return m_index;
+}
+
+
+/// set index
+//  @return index of the next FF
+size_t
+FeatureFunction
+::SetIndex(size_t const idx)
+{
+  m_index = idx;
+  return this->GetNumScoreComponents() + idx;
 }
 
 }

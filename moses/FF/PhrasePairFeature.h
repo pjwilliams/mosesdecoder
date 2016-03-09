@@ -1,5 +1,4 @@
-#ifndef moses_PhrasePairFeature_h
-#define moses_PhrasePairFeature_h
+#pragma once
 
 #include <stdexcept>
 #include <boost/unordered_set.hpp>
@@ -32,10 +31,20 @@ class PhrasePairFeature: public StatelessFeatureFunction
   CharHash m_punctuationHash;
   std::string m_filePathSource;
 
+  inline std::string ReplaceTilde(const StringPiece &str) const {
+    std::string out = str.as_string();
+    size_t pos = out.find('~');
+    while ( pos != std::string::npos ) {
+      out.replace(pos,1,"<TILDE>");
+      pos = out.find('~',pos);
+    }
+    return out;
+  };
+
 public:
   PhrasePairFeature(const std::string &line);
 
-  void Load();
+  void Load(AllOptions::ptr const& opts);
   void SetParameter(const std::string& key, const std::string& value);
 
   bool IsUseable(const FactorMask &mask) const;
@@ -43,8 +52,7 @@ public:
   void EvaluateInIsolation(const Phrase &source
                            , const TargetPhrase &targetPhrase
                            , ScoreComponentCollection &scoreBreakdown
-                           , ScoreComponentCollection &estimatedFutureScore) const {
-  }
+                           , ScoreComponentCollection &estimatedScores) const;
 
   void EvaluateTranslationOptionListWithSourceContext(const InputType &input
       , const TranslationOptionList &translationOptionList) const {
@@ -54,7 +62,7 @@ public:
                                  , const TargetPhrase &targetPhrase
                                  , const StackVec *stackVec
                                  , ScoreComponentCollection &scoreBreakdown
-                                 , ScoreComponentCollection *estimatedFutureScore = NULL) const;
+                                 , ScoreComponentCollection *estimatedScores = NULL) const;
 
   void EvaluateWhenApplied(const Hypothesis& hypo,
                            ScoreComponentCollection* accumulator) const {
@@ -69,5 +77,3 @@ public:
 
 }
 
-
-#endif

@@ -14,6 +14,8 @@ exe 1-1-Extraction : 1-1-Extraction.cpp ..//boost_filesystem ../moses//moses ;
 
 exe prunePhraseTable : prunePhraseTable.cpp ..//boost_filesystem ../moses//moses ..//boost_program_options  ;
 
+exe pruneGeneration : pruneGeneration.cpp ..//boost_filesystem ../moses//moses ..//boost_program_options  ;
+
 local with-cmph = [ option.get "with-cmph" ] ;
 if $(with-cmph) {
     exe processPhraseTableMin : processPhraseTableMin.cpp ..//boost_filesystem ../moses//moses ;
@@ -27,16 +29,10 @@ else {
     alias programsMin ;
 }
 
-if [ option.get "with-probing-pt" : : "yes" ]
-{
-    exe CreateProbingPT : CreateProbingPT.cpp ..//boost_filesystem ../moses//moses ;
-    exe QueryProbingPT : QueryProbingPT.cpp ..//boost_filesystem ../moses//moses ;
+exe CreateProbingPT : CreateProbingPT.cpp ..//boost_filesystem ../moses//moses ;
+exe QueryProbingPT : QueryProbingPT.cpp ..//boost_filesystem ../moses//moses ;
 
-    alias programsProbing : CreateProbingPT QueryProbingPT ;
-}
-else {
-    alias programsProbing ;
-}
+alias programsProbing : CreateProbingPT QueryProbingPT ;
 
 exe merge-sorted : 
 merge-sorted.cc 
@@ -46,6 +42,6 @@ $(TOP)//boost_iostreams
 $(TOP)//boost_program_options 
 ; 
 
-alias programs : 1-1-Extraction TMining generateSequences processLexicalTable queryLexicalTable programsMin programsProbing merge-sorted prunePhraseTable  ;
+alias programs : 1-1-Extraction TMining generateSequences processLexicalTable queryLexicalTable programsMin programsProbing merge-sorted prunePhraseTable pruneGeneration  ;
 #processPhraseTable queryPhraseTable
 

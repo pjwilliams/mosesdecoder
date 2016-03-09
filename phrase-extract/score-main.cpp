@@ -19,6 +19,7 @@
 
 #include <sstream>
 #include <assert.h>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <set>
@@ -50,7 +51,7 @@ bool treeFragmentsFlag = false;
 bool partsOfSpeechFlag = false;
 bool sourceSyntaxLabelsFlag = false;
 bool sourceSyntaxLabelCountsLHSFlag = false;
-bool targetPreferenceLabelsFlag = false;
+bool targetSyntacticPreferencesFlag = false;
 bool unpairedExtractFormatFlag = false;
 bool conditionOnTargetLhsFlag = false;
 bool wordAlignmentFlag = true;
@@ -67,9 +68,11 @@ bool spanLength = false;
 bool ruleLength = false;
 bool nonTermContext = false;
 bool nonTermContextTarget = false;
+bool targetConstituentBoundariesFlag = false;
 
 int countOfCounts[COC_MAX+1];
 int totalDistinct = 0;
+float minCount = 0;
 float minCountHierarchical = 0;
 bool phraseOrientationPriorsFlag = false;
 
@@ -81,11 +84,11 @@ std::vector<std::string> sourceLabelsByIndex;
 
 std::set<std::string> partsOfSpeechSet;
 
-boost::unordered_map<std::string,float> targetPreferenceLHSCounts;
-boost::unordered_map<std::string, boost::unordered_map<std::string,float>* > ruleTargetLHSAndTargetPreferenceLHSJointCounts;
-std::set<std::string> targetPreferenceLabelSet;
-std::map<std::string,size_t> targetPreferenceLabels;
-std::vector<std::string> targetPreferenceLabelsByIndex;
+boost::unordered_map<std::string,float> targetSyntacticPreferencesLHSCounts;
+boost::unordered_map<std::string, boost::unordered_map<std::string,float>* > ruleTargetLHSAndTargetSyntacticPreferencesLHSJointCounts;
+std::set<std::string> targetSyntacticPreferencesLabelSet;
+std::map<std::string,size_t> targetSyntacticPreferencesLabels;
+std::vector<std::string> targetSyntacticPreferencesLabelsByIndex;
 
 std::vector<float> orientationClassPriorsL2R(4,0); // mono swap dleft dright
 std::vector<float> orientationClassPriorsR2L(4,0); // mono swap dleft dright
@@ -130,7 +133,29 @@ int main(int argc, char* argv[])
 
   ScoreFeatureManager featureManager;
   if (argc < 4) {
-    std::cerr << "syntax: score extract lex phrase-table [--Inverse] [--Hierarchical] [--LogProb] [--NegLogProb] [--NoLex] [--GoodTuring] [--KneserNey] [--NoWordAlignment] [--UnalignedPenalty] [--UnalignedFunctionWordPenalty function-word-file] [--MinCountHierarchical count] [--PartsOfSpeech] [--PCFG] [--TreeFragments] [--SourceLabels] [--SourceLabelCountsLHS] [--TargetPreferenceLabels] [--UnpairedExtractFormat] [--ConditionOnTargetLHS] [--CrossedNonTerm]" << std::endl;
+    std::cerr <<
+              "syntax: score extract lex phrase-table "
+              "[--Inverse] "
+              "[--Hierarchical] "
+              "[--LogProb] "
+              "[--NegLogProb] "
+              "[--NoLex] "
+              "[--GoodTuring] "
+              "[--KneserNey] "
+              "[--NoWordAlignment] "
+              "[--UnalignedPenalty] "
+              "[--UnalignedFunctionWordPenalty function-word-file] "
+              "[--MinCountHierarchical count] "
+              "[--PartsOfSpeech] "
+              "[--PCFG] "
+              "[--TreeFragments] "
+              "[--SourceLabels] "
+              "[--SourceLabelCountsLHS] "
+              "[--TargetSyntacticPreferences] "
+              "[--UnpairedExtractFormat] "
+              "[--ConditionOnTargetLHS] "
+              "[--CrossedNonTerm]"
+              << std::endl;
     std::cerr << featureManager.usage() << std::endl;
     exit(1);
   }
@@ -143,11 +168,12 @@ int main(int argc, char* argv[])
   std::string fileNameFunctionWords;
   std::string fileNameLeftHandSideSourceLabelCounts;
   std::string fileNameLeftHandSideTargetSourceLabelCounts;
-  std::string fileNameTargetPreferenceLabelSet;
-  std::string fileNameLeftHandSideTargetPreferenceLabelCounts;
-  std::string fileNameLeftHandSideRuleTargetTargetPreferenceLabelCounts;
+  std::string fileNameTargetSyntacticPreferencesLabelSet;
+  std::string fileNameLeftHandSideTargetSyntacticPreferencesLabelCounts;
+  std::string fileNameLeftHandSideRuleTargetTargetSyntacticPreferencesLabelCounts;
   std::string fileNamePhraseOrientationPriors;
-  std::vector<std::string> featureArgs; // all unknown args passed to feature manager
+  // All unknown args are passed to feature manager.
+  std::vector<std::string> featureArgs;
 
   for(int i=4; i<argc; i++) {
     if (strcmp(argv[i],"inverse") == 0 || strcmp(argv[i],"--Inverse") == 0) {
@@ -180,14 +206,18 @@ int main(int argc, char* argv[])
       fileNameLeftHandSideSourceLabelCounts = std::string(fileNamePhraseTable) + ".src.lhs";
       fileNameLeftHandSideTargetSourceLabelCounts = std::string(fileNamePhraseTable) + ".tgt-src.lhs";
       std::cerr << "counting left-hand side source labels and writing them to files " << fileNameLeftHandSideSourceLabelCounts << " and " << fileNameLeftHandSideTargetSourceLabelCounts << std::endl;
-    } else if (strcmp(argv[i],"--TargetPreferenceLabels") == 0) {
-      targetPreferenceLabelsFlag = true;
-      std::cerr << "including target preference label information" << std::endl;
-      fileNameTargetPreferenceLabelSet = std::string(fileNamePhraseTable) + ".syntaxLabels.tgtpref";
-      std::cerr << "writing target preference label set to file " << fileNameTargetPreferenceLabelSet << std::endl;
-      fileNameLeftHandSideTargetPreferenceLabelCounts = std::string(fileNamePhraseTable) + ".tgtpref.lhs";
-      fileNameLeftHandSideRuleTargetTargetPreferenceLabelCounts = std::string(fileNamePhraseTable) + ".tgt-tgtpref.lhs";
-      std::cerr << "counting left-hand side target preference labels and writing them to files " << fileNameLeftHandSideTargetPreferenceLabelCounts << " and " << fileNameLeftHandSideRuleTargetTargetPreferenceLabelCounts << std::endl;
+    } else if (strcmp(argv[i],"--TargetSyntacticPreferences") == 0) {
+      targetSyntacticPreferencesFlag = true;
+      std::cerr << "including target syntactic preferences information" << std::endl;
+      fileNameTargetSyntacticPreferencesLabelSet = std::string(fileNamePhraseTable) + ".syntaxLabels.tgtpref";
+      std::cerr << "writing target syntactic preferences label set to file " << fileNameTargetSyntacticPreferencesLabelSet << std::endl;
+      fileNameLeftHandSideTargetSyntacticPreferencesLabelCounts = std::string(fileNamePhraseTable) + ".tgtpref.lhs";
+      fileNameLeftHandSideRuleTargetTargetSyntacticPreferencesLabelCounts = std::string(fileNamePhraseTable) + ".tgt-tgtpref.lhs";
+      std::cerr << "counting left-hand side target syntactic preferences labels and writing them to files "
+                << fileNameLeftHandSideTargetSyntacticPreferencesLabelCounts
+                << " and "
+                << fileNameLeftHandSideRuleTargetTargetSyntacticPreferencesLabelCounts
+                << std::endl;
     } else if (strcmp(argv[i],"--UnpairedExtractFormat") == 0) {
       unpairedExtractFormatFlag = true;
       std::cerr << "processing unpaired extract format" << std::endl;
@@ -226,9 +256,13 @@ int main(int argc, char* argv[])
       logProbFlag = true;
       negLogProb = -1;
       std::cerr << "using negative log-probabilities" << std::endl;
+    } else if (strcmp(argv[i],"--MinCount") == 0) {
+      minCount = std::atof( argv[++i] );
+      std::cerr << "dropping all phrase pairs occurring less than " << minCount << " times" << std::endl;
+      minCount -= 0.00001; // account for rounding
     } else if (strcmp(argv[i],"--MinCountHierarchical") == 0) {
-      minCountHierarchical = Moses::Scan<float>( argv[++i] );
-      std::cerr << "dropping all phrase pairs occurring less than " << minCountHierarchical << " times" << std::endl;
+      minCountHierarchical = std::atof( argv[++i] );
+      std::cerr << "dropping all hierarchical phrase pairs occurring less than " << minCountHierarchical << " times" << std::endl;
       minCountHierarchical -= 0.00001; // account for rounding
     } else if (strcmp(argv[i],"--CrossedNonTerm") == 0) {
       crossedNonTerm = true;
@@ -253,6 +287,9 @@ int main(int argc, char* argv[])
     } else if (strcmp(argv[i],"--NonTermContextTarget") == 0) {
       nonTermContextTarget = true;
       std::cerr << "non-term context (target)" << std::endl;
+    } else if (strcmp(argv[i],"--TargetConstituentBoundaries") == 0) {
+      targetConstituentBoundariesFlag = true;
+      std::cerr << "including target constituent boundaries information" << std::endl;
     } else {
       featureArgs.push_back(argv[i]);
       ++i;
@@ -315,7 +352,6 @@ int main(int argc, char* argv[])
 
   // loop through all extracted phrase translations
   std::string line, lastLine;
-  lastLine[0] = '\0';
   ExtractionPhrasePair *phrasePair = NULL;
   std::vector< ExtractionPhrasePair* > phrasePairsWithSameSource;
   std::vector< ExtractionPhrasePair* > phrasePairsWithSameSourceAndTarget; // required for hierarchical rules only, as non-terminal alignments might make the phrases incompatible
@@ -351,6 +387,7 @@ int main(int argc, char* argv[])
 
   while ( getline(extractFile, line) ) {
 
+    // Print progress dots to stderr.
     if ( ++i % 100000 == 0 ) {
       std::cerr << "." << std::flush;
     }
@@ -442,6 +479,9 @@ int main(int argc, char* argv[])
 
   }
 
+  // We've been printing progress dots to stderr.  End the line.
+  std::cerr << std::endl;
+
   processPhrasePairs( phrasePairsWithSameSource, *phraseTableFile, featureManager, maybeLogProb );
   for ( std::vector< ExtractionPhrasePair* >::const_iterator iter=phrasePairsWithSameSource.begin();
         iter!=phrasePairsWithSameSource.end(); ++iter) {
@@ -476,13 +516,13 @@ int main(int argc, char* argv[])
     writeLabelSet( partsOfSpeechSet, fileNamePartsOfSpeechSet );
   }
 
-  // target preference labels
-  if (targetPreferenceLabelsFlag && !inverseFlag) {
-    writeLabelSet( targetPreferenceLabelSet, fileNameTargetPreferenceLabelSet );
-    writeLeftHandSideLabelCounts( targetPreferenceLHSCounts,
-                                  ruleTargetLHSAndTargetPreferenceLHSJointCounts,
-                                  fileNameLeftHandSideTargetPreferenceLabelCounts,
-                                  fileNameLeftHandSideRuleTargetTargetPreferenceLabelCounts );
+  // target syntactic preferences labels
+  if (targetSyntacticPreferencesFlag && !inverseFlag) {
+    writeLabelSet( targetSyntacticPreferencesLabelSet, fileNameTargetSyntacticPreferencesLabelSet );
+    writeLeftHandSideLabelCounts( targetSyntacticPreferencesLHSCounts,
+                                  ruleTargetLHSAndTargetSyntacticPreferencesLHSJointCounts,
+                                  fileNameLeftHandSideTargetSyntacticPreferencesLabelCounts,
+                                  fileNameLeftHandSideRuleTargetTargetSyntacticPreferencesLabelCounts );
   }
 }
 
@@ -538,7 +578,7 @@ void processLine( std::string line,
     } else if (item + (includeSentenceIdFlag?-1:0) == 4) { // count
       sscanf(token[j].c_str(), "%f", &count);
     } else if (item + (includeSentenceIdFlag?-1:0) == 5) { // target syntax PCFG score
-      float pcfgScore = Moses::Scan<float>( token[j] );
+      float pcfgScore = std::atof( token[j].c_str() );
       pcfgSum = pcfgScore * count;
     }
   }
@@ -687,19 +727,19 @@ void outputPhrasePair(const ExtractionPhrasePair &phrasePair,
   if (goodTuringFlag || kneserNeyFlag) {
     totalDistinct++;
     int countInt = count + 0.99999;
-    if (countInt <= COC_MAX)
+    if ((countInt <= COC_MAX) &&
+        (countInt > 0))
       countOfCounts[ countInt ]++;
-  }
-
-  // compute PCFG score
-  float pcfgScore = 0;
-  if (pcfgFlag && !inverseFlag) {
-    pcfgScore = phrasePair.GetPcfgScore() / count;
   }
 
   // output phrases
   const PHRASE *phraseSource = phrasePair.GetSource();
   const PHRASE *phraseTarget = phrasePair.GetTarget();
+
+  // do not output if count below threshold
+  if (count < minCount) {
+    return;
+  }
 
   // do not output if hierarchical and count below threshold
   if (hierarchicalFlag && count < minCountHierarchical) {
@@ -707,6 +747,12 @@ void outputPhrasePair(const ExtractionPhrasePair &phrasePair,
       if (isNonTerminal(vcbS.getWord( phraseSource->at(j) )))
         return;
     }
+  }
+
+  // compute PCFG score
+  float pcfgScore = 0;
+  if (pcfgFlag && !inverseFlag) {
+    pcfgScore = phrasePair.GetPcfgScore() / count;
   }
 
   // source phrase (unless inverse)
@@ -836,7 +882,7 @@ void outputPhrasePair(const ExtractionPhrasePair &phrasePair,
   }
 
   // syntax labels
-  if ((sourceSyntaxLabelsFlag || targetPreferenceLabelsFlag) && !inverseFlag) {
+  if ((sourceSyntaxLabelsFlag || targetSyntacticPreferencesFlag) && !inverseFlag) {
     unsigned nNTs = 1;
     for(size_t j=0; j<phraseSource->size()-1; ++j) {
       if (isNonTerminal(vcbS.getWord( phraseSource->at(j) )))
@@ -859,20 +905,20 @@ void outputPhrasePair(const ExtractionPhrasePair &phrasePair,
                         << "}}";
       }
     }
-    // target preference labels
-    if (targetPreferenceLabelsFlag) {
-      std::string targetPreferenceLabelCounts;
-      targetPreferenceLabelCounts = phrasePair.CollectAllLabelsSeparateLHSAndRHS("TargetPreferences",
-                                    targetPreferenceLabelSet,
-                                    targetPreferenceLHSCounts,
-                                    ruleTargetLHSAndTargetPreferenceLHSJointCounts,
-                                    vcbT);
-      if ( !targetPreferenceLabelCounts.empty() ) {
+    // target syntactic preferences labels
+    if (targetSyntacticPreferencesFlag) {
+      std::string targetSyntacticPreferencesLabelCounts;
+      targetSyntacticPreferencesLabelCounts = phrasePair.CollectAllLabelsSeparateLHSAndRHS("TargetPreferences",
+                                              targetSyntacticPreferencesLabelSet,
+                                              targetSyntacticPreferencesLHSCounts,
+                                              ruleTargetLHSAndTargetSyntacticPreferencesLHSJointCounts,
+                                              vcbT);
+      if (!targetSyntacticPreferencesLabelCounts.empty()) {
         phraseTableFile << " {{TargetPreferences "
                         << nNTs // for convenience: number of non-terminal symbols in this rule (incl. left hand side NT)
                         << " "
                         << count // rule count
-                        << targetPreferenceLabelCounts
+                        << targetSyntacticPreferencesLabelCounts
                         << "}}";
       }
     }
@@ -900,7 +946,7 @@ void outputPhrasePair(const ExtractionPhrasePair &phrasePair,
   }
 
   if (nonTermContext && !inverseFlag) {
-	std::string propValue = phrasePair.CollectAllPropertyValues("NonTermContext");
+    std::string propValue = phrasePair.CollectAllPropertyValues("NonTermContext");
     if (!propValue.empty() && propValue.size() < 50000) {
       size_t nNTs = NumNonTerminal(phraseSource);
       phraseTableFile << " {{NonTermContext " << nNTs << " " << propValue << "}}";
@@ -908,10 +954,22 @@ void outputPhrasePair(const ExtractionPhrasePair &phrasePair,
   }
 
   if (nonTermContextTarget && !inverseFlag) {
-	std::string propValue = phrasePair.CollectAllPropertyValues("NonTermContextTarget");
+    std::string propValue = phrasePair.CollectAllPropertyValues("NonTermContextTarget");
     if (!propValue.empty() && propValue.size() < 50000) {
       size_t nNTs = NumNonTerminal(phraseSource);
       phraseTableFile << " {{NonTermContextTarget " << nNTs << " " << propValue << "}}";
+    }
+  }
+
+  // target constituent boundaries
+  if (targetConstituentBoundariesFlag && !inverseFlag) {
+    const std::string targetConstituentBoundariesLeftValues = phrasePair.CollectAllPropertyValues("TargetConstituentBoundariesLeft");
+    if (!targetConstituentBoundariesLeftValues.empty()) {
+      phraseTableFile << " {{TargetConstituentBoundariesLeft " << targetConstituentBoundariesLeftValues << "}}";
+    }
+    const std::string targetConstituentBoundariesRightAdjacentValues = phrasePair.CollectAllPropertyValues("TargetConstituentBoundariesRightAdjacent");
+    if (!targetConstituentBoundariesRightAdjacentValues.empty()) {
+      phraseTableFile << " {{TargetConstituentBoundariesRightAdjacent " << targetConstituentBoundariesRightAdjacentValues << "}}";
     }
   }
 
@@ -1158,7 +1216,7 @@ void LexicalTable::load( const std::string &fileName )
       continue;
     }
 
-    double prob = Moses::Scan<double>( token[2] );
+    double prob = std::atof( token[2].c_str() );
     WORD_ID wordT = vcbT.storeIfNew( token[0] );
     WORD_ID wordS = vcbS.storeIfNew( token[1] );
     ltable[ wordS ][ wordT ] = prob;

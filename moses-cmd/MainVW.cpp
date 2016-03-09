@@ -45,6 +45,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include "moses/FF/StatefulFeatureFunction.h"
 #include "moses/FF/StatelessFeatureFunction.h"
 #include "moses/TrainingTask.h"
+#include "util/random.hh"
 
 #ifdef HAVE_PROTOBUF
 #include "hypergraph.pb.h"
@@ -73,7 +74,7 @@ void OutputFeatureWeightsForHypergraph(std::ostream &outputSearchGraphStream)
 } //namespace
 
 /** main function of the command line version of the decoder **/
-int main(int argc, char** argv)
+int main(int argc, char const** argv)
 {
   try {
 
@@ -102,6 +103,7 @@ int main(int argc, char** argv)
 
     // initialize all "global" variables, which are stored in StaticData
     // note: this also loads models such as the language model, etc.
+    ResetUserTime();
     if (!StaticData::LoadDataStatic(&params, argv[0])) {
       exit(1);
     }
@@ -117,14 +119,14 @@ int main(int argc, char** argv)
 
 
     //initialise random numbers
-    srand(time(NULL));
+    util::rand_init();
 
     // set up read/writing class
     IFVERBOSE(1) {
       PrintUserTime("Created input-output object");
     }
-
-    boost::shared_ptr<IOWrapper> ioWrapper(new IOWrapper());
+    AllOptions::ptr opts(new AllOptions(*StaticData::Instance().options()));
+    boost::shared_ptr<IOWrapper> ioWrapper(new IOWrapper(*opts));
     if (ioWrapper == NULL) {
       cerr << "Error; Failed to create IO object" << endl;
       exit(1);
@@ -143,26 +145,24 @@ int main(int argc, char** argv)
 #endif
 
     // main loop over set of input sentences
-    
+
     boost::shared_ptr<InputType> source;
-    while ((source = ioWrapper->ReadInput()) != NULL)
-      {
-	IFVERBOSE(1) { ResetUserTime(); }
-
-	InputType* foo = source.get();
-	FeatureFunction::CallChangeSource(foo);
-
-	// set up task of training one sentence
-	boost::shared_ptr<TrainingTask> 
-	  task(new TrainingTask(source.get(), *ioWrapper));
-
-	// execute task
-#ifdef WITH_THREADS
-	pool.Submit(task);
-#else
-	task->Run();
-#endif
+    while ((source = ioWrapper->ReadInput()) != NULL) {
+      IFVERBOSE(1) {
+        ResetUserTime();
       }
+
+      // set up task of training one sentence
+      boost::shared_ptr<TrainingTask> task;
+      task = TrainingTask::create(source, ioWrapper);
+
+      // execute task
+#ifdef WITH_THREADS
+      pool.Submit(task);
+#else
+      task->Run();
+#endif
+    }
 
     // we are done, finishing up
 #ifdef WITH_THREADS

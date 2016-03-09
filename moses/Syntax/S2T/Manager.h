@@ -30,7 +30,7 @@ template<typename Parser>
 class Manager : public Syntax::Manager
 {
 public:
-  Manager(const InputType &);
+  Manager(ttasksptr const& ttask);
 
   void Decode();
 
@@ -45,7 +45,7 @@ public:
   void OutputDetailedTranslationReport(OutputCollector *collector) const;
 
 private:
-  void FindOovs(const PChart &, std::set<Word> &, std::size_t);
+  void FindOovs(const PChart &, boost::unordered_set<Word> &, std::size_t);
 
   void InitializeCharts();
 

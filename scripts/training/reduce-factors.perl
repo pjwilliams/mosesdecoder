@@ -1,5 +1,9 @@
-#!/usr/bin/perl -w
+#!/usr/bin/env perl
+#
+# This file is part of moses.  Its use is licensed under the GNU Lesser General
+# Public License version 2.1 or, at your option, any later version.
 
+use warnings;
 use strict;
 use Getopt::Long "GetOptions";
 use FindBin qw($RealBin);
@@ -96,7 +100,7 @@ sub reduce_factors {
                 # $first_factor = 0;
                 # print OUT $FACTOR[$factor];
             # }
-        } 
+        }
         print OUT "\n";
     }
     print STDERR "\n";

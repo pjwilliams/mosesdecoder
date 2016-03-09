@@ -29,13 +29,13 @@
 #include <cstring>
 #include <cctype>
 #include <algorithm>
-#include <stdio.h>
+#include <cstdio>
 #include <iostream>
 #include <iomanip>
 #include <boost/algorithm/string/predicate.hpp>
 #include "TypeDef.h"
 #include "Util.h"
-#include "Timer.h"
+//#include "Timer.h"
 #include "util/exception.hh"
 #include "util/file.hh"
 #include "moses/FF/StatelessFeatureFunction.h"
@@ -48,8 +48,6 @@ using namespace boost::algorithm;
 namespace Moses
 {
 
-//global variable
-Timer g_timer;
 
 string GetTempFolder()
 {
@@ -88,28 +86,6 @@ bool FileExists(const std::string& filePath)
 {
   ifstream ifs(filePath.c_str());
   return !ifs.fail();
-}
-
-const std::string Trim(const std::string& str, const std::string dropChars)
-{
-  std::string res = str;
-  res.erase(str.find_last_not_of(dropChars)+1);
-  return res.erase(0, res.find_first_not_of(dropChars));
-}
-
-void ResetUserTime()
-{
-  g_timer.start();
-};
-
-void PrintUserTime(const std::string &message)
-{
-  g_timer.check(message.c_str());
-}
-
-double GetUserTime()
-{
-  return g_timer.get_elapsed_time();
 }
 
 std::vector< std::map<std::string, std::string> > ProcessAndStripDLT(std::string &line)

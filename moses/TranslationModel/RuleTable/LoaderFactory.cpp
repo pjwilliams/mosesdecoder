@@ -35,14 +35,14 @@ namespace Moses
 
 // Determines the rule table type by peeking inside the file then creates
 // a suitable RuleTableLoader object.
-std::auto_ptr<RuleTableLoader> RuleTableLoaderFactory::Create(
-  const std::string &path)
+std::auto_ptr<RuleTableLoader>
+RuleTableLoaderFactory::
+Create(const std::string &path)
 {
   InputFileStream input(path);
   std::string line;
-  bool cont = std::getline(input, line);
 
-  if (cont) {
+  if (std::getline(input, line)) {
     std::vector<std::string> tokens;
     Tokenize(tokens, line);
     if (tokens.size() == 1) {
@@ -52,9 +52,7 @@ std::auto_ptr<RuleTableLoader> RuleTableLoaderFactory::Create(
       std::cerr << "Unsupported compact rule table format: " << tokens[0];
       return std::auto_ptr<RuleTableLoader>();
     } else if (tokens[0] == "[X]" && tokens[1] == "|||") {
-      return std::auto_ptr<RuleTableLoader>(new
-                                            RuleTableLoaderHiero());
-
+      return std::auto_ptr<RuleTableLoader>(new RuleTableLoaderHiero());
     }
 
     return std::auto_ptr<RuleTableLoader>(new RuleTableLoaderStandard());

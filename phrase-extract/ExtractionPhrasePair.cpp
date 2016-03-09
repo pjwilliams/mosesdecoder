@@ -242,7 +242,7 @@ void ExtractionPhrasePair::AddProperties( const std::string &propertiesString, f
     vector<std::string> keyValue = Moses::TokenizeFirstOnly(tok, " ");
     if (keyValue.size() == 2) {
       AddProperty(keyValue[0], keyValue[1], count);
-    } 
+    }
   }
 }
 
@@ -311,12 +311,14 @@ std::string ExtractionPhrasePair::CollectAllPropertyValues(const std::string &ke
   std::ostringstream oss;
   for (PROPERTY_VALUES::const_iterator iter=allPropertyValues->begin();
        iter!=allPropertyValues->end(); ++iter) {
-    if (iter!=allPropertyValues->begin()) {
+    if (!(iter->first).empty()) {
+      if (iter!=allPropertyValues->begin()) {
+        oss << " ";
+      }
+      oss << iter->first;
       oss << " ";
+      oss << iter->second;
     }
-    oss << iter->first;
-    oss << " ";
-    oss << iter->second;
   }
 
   std::string allPropertyValuesString(oss.str());

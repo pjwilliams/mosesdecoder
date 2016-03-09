@@ -25,7 +25,7 @@
 #include <boost/unordered_map.hpp>
 #include "ChartCell.h"
 #include "ChartCellCollection.h"
-#include "WordsRange.h"
+#include "Range.h"
 #include "SentenceStats.h"
 #include "ChartTranslationOptionList.h"
 #include "ChartParser.h"
@@ -33,8 +33,6 @@
 #include "ChartKBestExtractor.h"
 #include "BaseManager.h"
 #include "moses/Syntax/KBestExtractor.h"
-
-#include <boost/shared_ptr.hpp>
 
 namespace Moses
 {
@@ -105,7 +103,7 @@ private:
   void Backtrack(const ChartHypothesis *hypo) const;
 
 public:
-  ChartManager(InputType const& source);
+  ChartManager(ttasksptr const& ttask);
   ~ChartManager();
   void Decode();
   void AddXmlChartOptions();
@@ -166,7 +164,7 @@ public:
   void OutputSearchGraph(OutputCollector *collector) const;
   void OutputSearchGraphSLF() const {
   }
-  void OutputSearchGraphHypergraph() const;
+  // void OutputSearchGraphHypergraph() const;
 
 };
 

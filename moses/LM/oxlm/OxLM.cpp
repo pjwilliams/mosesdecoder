@@ -7,6 +7,7 @@
 
 #include "moses/FactorCollection.h"
 #include "moses/InputType.h"
+#include "moses/TranslationTask.h"
 
 using namespace std;
 using namespace oxlm;
@@ -69,7 +70,7 @@ void OxLM<Model>::SetParameter(const string& key, const string& value)
 }
 
 template<class Model>
-void OxLM<Model>::Load()
+void OxLM<Model>::Load(AllOptions::ptr const& opts)
 {
   model.load(m_filePath);
 
@@ -176,9 +177,10 @@ void OxLM<Model>::savePersistentCache(const string& cache_file) const
 }
 
 template<class Model>
-void OxLM<Model>::InitializeForInput(const InputType& source)
+void OxLM<Model>::InitializeForInput(ttasksptr const& ttask)
 {
-  LanguageModelSingleFactor::InitializeForInput(source);
+  const InputType& source = *ttask->GetSource();
+  LanguageModelSingleFactor::InitializeForInput(ttask);
 
   if (persistentCache) {
     if (!cache.get()) {

@@ -36,6 +36,7 @@ using namespace irstlm;
 #include "moses/Phrase.h"
 #include "moses/InputFileStream.h"
 #include "moses/StaticData.h"
+#include "moses/TranslationTask.h"
 
 using namespace std;
 
@@ -95,7 +96,7 @@ bool LanguageModelIRST::IsUseable(const FactorMask &mask) const
   return ret;
 }
 
-void LanguageModelIRST::Load()
+void LanguageModelIRST::Load(AllOptions::ptr const& opts)
 {
   FactorCollection &factorCollection = FactorCollection::Instance();
 
@@ -402,7 +403,7 @@ bool LMCacheCleanup(const int sentences_done, const size_t m_lmcache_cleanup_thr
   return false;
 }
 
-void LanguageModelIRST::InitializeForInput(InputType const& source)
+void LanguageModelIRST::InitializeForInput(ttasksptr const& ttask)
 {
   //nothing to do
 #ifdef TRACE_CACHE

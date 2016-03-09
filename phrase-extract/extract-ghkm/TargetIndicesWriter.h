@@ -25,7 +25,8 @@
 
 #include <ostream>
 
-namespace Moses {
+namespace MosesTraining {
+namespace Syntax {
 namespace GHKM {
 
 class AlignmentGraph;
@@ -71,6 +72,7 @@ class TargetIndicesWriter
 };
 
 }  // namespace GHKM
-}  // namespace Moses
+}  // namespace Syntax
+}  // namespace MosesTraining
 
 #endif

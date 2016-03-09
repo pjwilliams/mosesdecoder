@@ -21,7 +21,9 @@
 
 #include "Subgraph.h"
 
-namespace Moses
+namespace MosesTraining
+{
+namespace Syntax
 {
 namespace GHKM
 {
@@ -82,4 +84,5 @@ void Node::GetTargetNodes(std::vector<const Node *> &targetNodes) const
 }
 
 }  // namespace GHKM
-}  // namespace Moses
+}  // namespace Syntax
+}  // namespace MosesTraining

@@ -36,7 +36,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include <boost/thread/tss.hpp>
 #else
 #include <boost/scoped_ptr.hpp>
-#include <time.h>
+#include <ctime>
 #endif
 
 #include "moses/Phrase.h"
@@ -44,32 +44,30 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #include "moses/TargetPhraseCollection.h"
 #include "moses/InputPath.h"
 #include "moses/FF/DecodeFeature.h"
+#include "moses/ContextScope.h"
 
 namespace Moses
 {
 
 class StaticData;
 class InputType;
-class WordsRange;
+class Range;
 class ChartCellCollectionBase;
 class ChartRuleLookupManager;
 class ChartParser;
 
-class CacheColl : public boost::unordered_map<size_t, std::pair<const TargetPhraseCollection*, clock_t> >
-{
-// 1st = hash of source phrase/ address of phrase-table node
-// 2nd = all translations
-// 3rd = time of last access
-
-public:
-  ~CacheColl();
-};
+// typedef std::pair<TargetPhraseCollection::shared_ptr, clock_t> TPCollLastUse;
+typedef std::pair<TargetPhraseCollection::shared_ptr, clock_t> CacheCollEntry;
+typedef boost::unordered_map<size_t, CacheCollEntry> CacheColl;
 
 /**
   * Abstract base class for phrase dictionaries (tables).
   **/
 class PhraseDictionary :  public DecodeFeature
 {
+  friend class PhraseDictionaryMultiModelCounts;
+  // why is this necessary? that's a derived class, so it should have
+  // access to the
 public:
   virtual bool ProvidesPrefixCheck() const;
 
@@ -77,7 +75,7 @@ public:
     return s_staticColl;
   }
 
-  PhraseDictionary(const std::string &line);
+  PhraseDictionary(const std::string &line, bool registerNow);
 
   virtual ~PhraseDictionary() {
   }
@@ -92,31 +90,42 @@ public:
     return m_id;
   }
 
-  virtual
-  void
-  Release(TargetPhraseCollection const* tpc) const;
+  // virtual
+  // void
+  // Release(ttasksptr const& ttask, TargetPhraseCollection const*& tpc) const;
 
   /// return true if phrase table entries starting with /phrase/
   //  exist in the table.
   virtual
   bool
-  PrefixExists(Phrase const& phrase) const;
+  PrefixExists(ttasksptr const& ttask, Phrase const& phrase) const;
 
   // LEGACY!
   // The preferred method is to override GetTargetPhraseCollectionBatch().
   // See class PhraseDictionaryMemory or PhraseDictionaryOnDisk for details
   //! find list of translations that can translates src. Only for phrase input
 
-  virtual
-  TargetPhraseCollection const *
+public:
+  virtual TargetPhraseCollection::shared_ptr
   GetTargetPhraseCollectionLEGACY(const Phrase& src) const;
 
-  virtual
-  void
+  virtual TargetPhraseCollection::shared_ptr
+  GetTargetPhraseCollectionLEGACY(ttasksptr const& ttask,
+                                  Phrase const& src) const {
+    return GetTargetPhraseCollectionLEGACY(src);
+  }
+
+  virtual void
   GetTargetPhraseCollectionBatch(const InputPathList &inputPathQueue) const;
 
+  virtual void
+  GetTargetPhraseCollectionBatch
+  (ttasksptr const& ttask, InputPathList const& inputPathQueue) const {
+    GetTargetPhraseCollectionBatch(inputPathQueue);
+  }
+
   //! Create entry for translation of source to targetPhrase
-  virtual void InitializeForInput(InputType const& source) {
+  virtual void InitializeForInput(ttasksptr const& ttask) {
   }
   // clean up temporary memory, called after processing each sentence
   virtual void CleanUpAfterSentenceProcessing(const InputType& source) {
@@ -140,7 +149,9 @@ public:
 
   // LEGACY
   //! find list of translations that can translates a portion of src. Used by confusion network decoding
-  virtual const TargetPhraseCollectionWithSourcePhrase* GetTargetPhraseCollectionLEGACY(InputType const& src,WordsRange const& range) const;
+  virtual
+  TargetPhraseCollectionWithSourcePhrase::shared_ptr
+  GetTargetPhraseCollectionLEGACY(InputType const& src,Range const& range) const;
 
 protected:
   static std::vector<PhraseDictionary*> s_staticColl;
@@ -167,7 +178,10 @@ protected:
   mutable boost::scoped_ptr<CacheColl> m_cache;
 #endif
 
-  virtual const TargetPhraseCollection *GetTargetPhraseCollectionNonCacheLEGACY(const Phrase& src) const;
+  virtual
+  TargetPhraseCollection::shared_ptr
+  GetTargetPhraseCollectionNonCacheLEGACY(const Phrase& src) const;
+
   void ReduceCache() const;
 
 protected:

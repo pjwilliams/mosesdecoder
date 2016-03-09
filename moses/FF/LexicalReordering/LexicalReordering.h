@@ -1,4 +1,4 @@
-// -*- c++ -*-
+// -*- mode: c++; indent-tabs-mode: nil; tab-width:2  -*-
 #pragma once
 
 #include <string>
@@ -8,7 +8,7 @@
 #include "moses/Phrase.h"
 #include "moses/TypeDef.h"
 #include "moses/Util.h"
-#include "moses/WordsRange.h"
+#include "moses/Range.h"
 #include "moses/TranslationOption.h"
 
 #include "moses/FF/StatefulFeatureFunction.h"
@@ -33,7 +33,7 @@ class LexicalReordering : public StatefulFeatureFunction
 public:
   LexicalReordering(const std::string &line);
   virtual ~LexicalReordering();
-  void Load();
+  void Load(AllOptions::ptr const& opts);
 
   virtual
   bool
@@ -44,8 +44,8 @@ public:
   EmptyHypothesisState(const InputType &input) const;
 
   void
-  InitializeForInput(const InputType& i) {
-    m_table->InitializeForInput(i);
+  InitializeForInput(ttasksptr const& ttask) {
+    if (m_table) m_table->InitializeForInput(ttask);
   }
 
   Scores
@@ -63,28 +63,6 @@ public:
                       ScoreComponentCollection*) const {
     UTIL_THROW2("LexicalReordering is not valid for chart decoder");
   }
-
-  void
-  EvaluateWithSourceContext
-  (const InputType &input,
-   const InputPath &inputPath,
-   const TargetPhrase &targetPhrase,
-   const StackVec *stackVec,
-   ScoreComponentCollection& scoreBreakdown,
-   ScoreComponentCollection* estimatedFutureScore = NULL) const
-  { }
-
-  void
-  EvaluateTranslationOptionListWithSourceContext
-  (const InputType &input, const TranslationOptionList &transOptList) const
-  { }
-
-  void
-  EvaluateInIsolation(const Phrase &source,
-                      const TargetPhrase &targetPhrase,
-                      ScoreComponentCollection &scoreBreakdown,
-                      ScoreComponentCollection &estimatedFutureScore) const
-  { }
 
   bool
   GetHaveDefaultScores() {
@@ -118,6 +96,8 @@ private:
   std::string m_filePath;
   bool m_haveDefaultScores;
   Scores m_defaultScores;
+public:
+  LRModel const& GetModel() const;
 };
 
 }

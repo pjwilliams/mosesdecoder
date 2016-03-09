@@ -29,7 +29,8 @@
 #include <sstream>
 #include <vector>
 
-namespace Moses {
+namespace MosesTraining {
+namespace Syntax {
 namespace GHKM {
 
 void TargetIndicesWriter::IndexGraph(const AlignmentGraph &graph,
@@ -84,4 +85,5 @@ void TargetIndicesWriter::Write(const Subgraph &fragment)
 }
 
 }  // namespace GHKM
-}  // namespace Moses
+}  // namespace Syntax
+}  // namespace MosesTraining

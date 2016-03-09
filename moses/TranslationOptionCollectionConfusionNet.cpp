@@ -1,4 +1,4 @@
-// $Id$
+// -*- mode: c++; indent-tabs-mode: nil; tab-width:2  -*-
 
 #include <list>
 #include <vector>
@@ -12,7 +12,7 @@
 #include "TranslationModel/PhraseDictionaryTreeAdaptor.h"
 #include "util/exception.hh"
 #include <boost/foreach.hpp>
-
+#include "TranslationTask.h"
 using namespace std;
 
 namespace Moses
@@ -20,12 +20,14 @@ namespace Moses
 
 /** constructor; just initialize the base class */
 TranslationOptionCollectionConfusionNet::
-TranslationOptionCollectionConfusionNet(const ConfusionNet &input,
-                                        size_t maxNoTransOptPerCoverage,
-                                        float translationOptionThreshold)
-  : TranslationOptionCollection(input, maxNoTransOptPerCoverage,
-                                translationOptionThreshold)
+TranslationOptionCollectionConfusionNet(ttasksptr const& ttask,
+                                        const ConfusionNet &input)
+// , size_t maxNoTransOptPerCoverage, float translationOptionThreshold)
+  : TranslationOptionCollection(ttask,input)//
+  // , maxNoTransOptPerCoverage, translationOptionThreshold)
 {
+  size_t maxNoTransOptPerCoverage = ttask->options()->search.max_trans_opt_per_cov;
+  float translationOptionThreshold = ttask->options()->search.trans_opt_threshold;
   // Prefix checkers are phrase dictionaries that provide a prefix check
   // to indicate that a phrase table entry with a given prefix exists.
   // If no entry with the given prefix exists, there is no point in
@@ -34,13 +36,13 @@ TranslationOptionCollectionConfusionNet(const ConfusionNet &input,
   BOOST_FOREACH(PhraseDictionary* pd, PhraseDictionary::GetColl())
   if (pd->ProvidesPrefixCheck()) prefixCheckers.push_back(pd);
 
-  const InputFeature &inputFeature = InputFeature::Instance();
-  UTIL_THROW_IF2(&inputFeature == NULL, "Input feature must be specified");
+  const InputFeature *inputFeature = InputFeature::InstancePtr();
+  UTIL_THROW_IF2(inputFeature == NULL, "Input feature must be specified");
 
   size_t inputSize = input.GetSize();
   m_inputPathMatrix.resize(inputSize);
 
-  size_t maxSizePhrase = StaticData::Instance().GetMaxPhraseLength();
+  size_t maxSizePhrase = ttask->options()->search.max_phrase_length;
   maxSizePhrase = std::min(inputSize, maxSizePhrase);
 
   // 1-word phrases
@@ -49,7 +51,7 @@ TranslationOptionCollectionConfusionNet(const ConfusionNet &input,
     vec.push_back(InputPathList());
     InputPathList &list = vec.back();
 
-    WordsRange range(startPos, startPos);
+    Range range(startPos, startPos);
     const NonTerminalSet &labels = input.GetLabelSet(startPos, startPos);
 
     const ConfusionNet::Column &col = input.GetColumn(startPos);
@@ -61,7 +63,8 @@ TranslationOptionCollectionConfusionNet(const ConfusionNet &input,
       const ScorePair &scores = col[i].second;
       ScorePair *inputScore = new ScorePair(scores);
 
-      InputPath *path = new InputPath(subphrase, labels, range, NULL, inputScore);
+      InputPath* path = new InputPath(ttask.get(), subphrase, labels,
+                                      range, NULL, inputScore);
       list.push_back(path);
 
       m_inputPathQueue.push_back(path);
@@ -73,7 +76,7 @@ TranslationOptionCollectionConfusionNet(const ConfusionNet &input,
     for (size_t startPos = 0; startPos < inputSize - phraseSize + 1; ++startPos) {
       size_t endPos = startPos + phraseSize -1;
 
-      WordsRange range(startPos, endPos);
+      Range range(startPos, endPos);
       const NonTerminalSet &labels = input.GetLabelSet(startPos, endPos);
 
       vector<InputPathList> &vec = m_inputPathMatrix[startPos];
@@ -105,14 +108,15 @@ TranslationOptionCollectionConfusionNet(const ConfusionNet &input,
 
           bool OK = prefixCheckers.size() == 0;
           for (size_t k = 0; !OK && k < prefixCheckers.size(); ++k)
-            OK = prefixCheckers[k]->PrefixExists(subphrase);
+            OK = prefixCheckers[k]->PrefixExists(m_ttask.lock(), subphrase);
           if (!OK) continue;
 
           const ScorePair &scores = col[i].second;
           ScorePair *inputScore = new ScorePair(*prevInputScore);
           inputScore->PlusEquals(scores);
 
-          InputPath *path = new InputPath(subphrase, labels, range, &prevPath, inputScore);
+          InputPath *path = new InputPath(ttask.get(), subphrase, labels, range,
+                                          &prevPath, inputScore);
           list.push_back(path);
 
           m_inputPathQueue.push_back(path);
@@ -142,7 +146,7 @@ InputPathList &TranslationOptionCollectionConfusionNet::GetInputPathList(size_t 
 */
 void TranslationOptionCollectionConfusionNet::ProcessUnknownWord(size_t sourcePos)
 {
-  ConfusionNet const& source=dynamic_cast<ConfusionNet const&>(m_source);
+  ConfusionNet const& source=static_cast<ConfusionNet const&>(m_source);
 
   ConfusionNet::Column const& coll=source.GetColumn(sourcePos);
   const InputPathList &inputPathList = GetInputPathList(sourcePos, sourcePos);
@@ -161,7 +165,9 @@ void TranslationOptionCollectionConfusionNet::ProcessUnknownWord(size_t sourcePo
 
 }
 
-void TranslationOptionCollectionConfusionNet::CreateTranslationOptions()
+void
+TranslationOptionCollectionConfusionNet
+::CreateTranslationOptions()
 {
   if (!StaticData::Instance().GetUseLegacyPT()) {
     GetTargetPhraseCollectionBatch();
@@ -198,8 +204,9 @@ CreateTranslationOptionsForRange(const DecodeGraph &decodeGraph,
 
 bool
 TranslationOptionCollectionConfusionNet::
-CreateTranslationOptionsForRangeNew(const DecodeGraph &decodeGraph, size_t startPos,
-                                    size_t endPos, bool adhereTableLimit, size_t graphInd)
+CreateTranslationOptionsForRangeNew
+( const DecodeGraph &decodeGraph, size_t startPos, size_t endPos,
+  bool adhereTableLimit, size_t graphInd)
 {
   InputPathList &inputPathList = GetInputPathList(startPos, endPos);
   if (inputPathList.size() == 0) return false; // no input path matches!
@@ -214,24 +221,29 @@ CreateTranslationOptionsForRangeNew(const DecodeGraph &decodeGraph, size_t start
 
 bool
 TranslationOptionCollectionConfusionNet::
-CreateTranslationOptionsForRangeLEGACY(const DecodeGraph &decodeGraph, size_t startPos,
-                                       size_t endPos, bool adhereTableLimit, size_t graphInd)
+CreateTranslationOptionsForRangeLEGACY(const DecodeGraph &decodeGraph,
+                                       size_t startPos, size_t endPos,
+                                       bool adhereTableLimit, size_t graphInd)
 {
   bool retval = true;
-  XmlInputType intype = StaticData::Instance().GetXmlInputType();
+  size_t const max_phrase_length
+  = StaticData::Instance().options()->search.max_phrase_length;
+  XmlInputType intype = m_ttask.lock()->options()->input.xml_policy;
   if ((intype != XmlExclusive) || !HasXmlOptionsOverlappingRange(startPos,endPos)) {
     InputPathList &inputPathList = GetInputPathList(startPos, endPos);
 
     // partial trans opt stored in here
-    PartialTranslOptColl* oldPtoc = new PartialTranslOptColl;
+    PartialTranslOptColl* oldPtoc = new PartialTranslOptColl(max_phrase_length);
     size_t totalEarlyPruned = 0;
 
     // initial translation step
     list <const DecodeStep* >::const_iterator iterStep = decodeGraph.begin();
     const DecodeStep &decodeStep = **iterStep;
 
-    static_cast<const DecodeStepTranslation&>(decodeStep).ProcessInitialTranslationLEGACY
-    (m_source, *oldPtoc, startPos, endPos, adhereTableLimit, inputPathList);
+    DecodeStepTranslation const& dstep
+    = static_cast<const DecodeStepTranslation&>(decodeStep);
+    dstep.ProcessInitialTransLEGACY(m_source, *oldPtoc, startPos, endPos,
+                                    adhereTableLimit, inputPathList);
 
     // do rest of decode steps
     int indexStep = 0;
@@ -242,7 +254,7 @@ CreateTranslationOptionsForRangeLEGACY(const DecodeGraph &decodeGraph, size_t st
       const DecodeStepTranslation *transStep =dynamic_cast<const DecodeStepTranslation*>(decodeStep);
       const DecodeStepGeneration *genStep =dynamic_cast<const DecodeStepGeneration*>(decodeStep);
 
-      PartialTranslOptColl* newPtoc = new PartialTranslOptColl;
+      PartialTranslOptColl* newPtoc = new PartialTranslOptColl(max_phrase_length);
 
       // go thru each intermediate trans opt just created
       const vector<TranslationOption*>& partTransOptList = oldPtoc->GetList();

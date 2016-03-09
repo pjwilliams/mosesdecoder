@@ -6,7 +6,7 @@
 #include "moses/Syntax/PHyperedge.h"
 
 #include "TailLattice.h"
-
+#include "moses/TargetPhraseCollection.h"
 namespace Moses
 {
 namespace Syntax
@@ -25,13 +25,14 @@ public:
     , m_key(key)
     , m_ranges(ranges) {}
 
-  void Search(const std::vector<int> &labels, const TargetPhraseCollection &tpc,
+  void Search(const std::vector<int> &labels,
+              const TargetPhraseCollection::shared_ptr tpc,
               Callback &callback) {
     m_labels = &labels;
     m_matchCB = &callback;
     m_hyperedge.head = 0;
     m_hyperedge.tail.clear();
-    m_hyperedge.label.translations = &tpc;
+    m_hyperedge.label.translations = tpc;
     SearchInner(0, 0, 0);
   }
 
@@ -58,7 +59,7 @@ private:
 
     const int absStart = m_ranges[0].minStart + offset;
     const int minWidth = std::max(1, range.minEnd - absStart + 1);
-    const int maxWidth = range.maxEnd - absStart + 1;
+    const std::size_t maxWidth = range.maxEnd - absStart + 1;
 
     const std::vector<std::vector<const PVertex *> > &innerVec =
       m_lattice[offset][nonTermIndex+1];

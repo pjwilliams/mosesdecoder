@@ -1,5 +1,4 @@
-// $Id$
-
+// -*- mode: c++; indent-tabs-mode: nil; tab-width:2  -*-
 /***********************************************************************
  Moses - factored phrase-based language decoder
  Copyright (C) 2006 University of Edinburgh
@@ -20,9 +19,10 @@
  ***********************************************************************/
 
 #include <algorithm>
-#include <stdlib.h>
+//#include <stdlib.h>
 #include <taco/constraint_evaluator.h>
 #include <taco/option_table.h>
+#include <cstdlib>
 #include "util/exception.hh"
 #include "util/tokenize_piece.hh"
 
@@ -34,6 +34,7 @@
 #include "Util.h"
 #include "AlignmentInfoCollection.h"
 #include "InputPath.h"
+#include "TranslationTask.h"
 #include "moses/TranslationModel/PhraseDictionary.h"
 #include <boost/foreach.hpp>
 
@@ -66,27 +67,68 @@ TargetPhrase::GuardedPartialFSVec & TargetPhrase::GuardedPartialFSVec::operator=
 
 TargetPhrase::TargetPhrase( std::string out_string, const PhraseDictionary *pt)
   :Phrase(0)
-  , m_fullScore(0.0)
   , m_futureScore(0.0)
+  , m_estimatedScore(0.0)
   , m_alignTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
   , m_alignNonTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
   , m_lhsTarget(NULL)
   , m_ruleSource(NULL)
   , m_container(pt)
 {
-
   //ACAT
   const StaticData &staticData = StaticData::Instance();
   // XXX should this really be InputFactorOrder???
-  CreateFromString(Output, staticData.GetInputFactorOrder(), out_string,
-                   // staticData.GetFactorDelimiter(), // eliminated [UG]
+  CreateFromString(Output, staticData.options()->input.factor_order, out_string,
                    NULL);
+}
+
+TargetPhrase::TargetPhrase(ttasksptr& ttask, std::string out_string, const PhraseDictionary *pt)
+  :Phrase(0)
+  , m_futureScore(0.0)
+  , m_estimatedScore(0.0)
+  , m_alignTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
+  , m_alignNonTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
+  , m_lhsTarget(NULL)
+  , m_ruleSource(NULL)
+  , m_container(pt)
+{
+  if (ttask) m_scope = ttask->GetScope();
+
+  // XXX should this really be InputFactorOrder???
+  CreateFromString(Output, ttask->options()->input.factor_order, out_string,
+                   NULL);
+}
+
+TargetPhrase::TargetPhrase(ttasksptr& ttask, const PhraseDictionary *pt)
+  : Phrase()
+  , m_futureScore(0.0)
+  , m_estimatedScore(0.0)
+  , m_alignTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
+  , m_alignNonTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
+  , m_lhsTarget(NULL)
+  , m_ruleSource(NULL)
+  , m_container(pt)
+{
+  if (ttask) m_scope = ttask->GetScope();
+}
+
+TargetPhrase::TargetPhrase(ttasksptr& ttask, const Phrase &phrase, const PhraseDictionary *pt)
+  : Phrase(phrase)
+  , m_futureScore(0.0)
+  , m_estimatedScore(0.0)
+  , m_alignTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
+  , m_alignNonTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
+  , m_lhsTarget(NULL)
+  , m_ruleSource(NULL)
+  , m_container(pt)
+{
+  if (ttask) m_scope = ttask->GetScope();
 }
 
 TargetPhrase::TargetPhrase(const PhraseDictionary *pt)
   :Phrase()
-  , m_fullScore(0.0)
   , m_futureScore(0.0)
+  , m_estimatedScore(0.0)
   , m_alignTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
   , m_alignNonTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
   , m_lhsTarget(NULL)
@@ -97,8 +139,8 @@ TargetPhrase::TargetPhrase(const PhraseDictionary *pt)
 
 TargetPhrase::TargetPhrase(const Phrase &phrase, const PhraseDictionary *pt)
   : Phrase(phrase)
-  , m_fullScore(0.0)
   , m_futureScore(0.0)
+  , m_estimatedScore(0.0)
   , m_alignTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
   , m_alignNonTerm(&AlignmentInfoCollection::Instance().GetEmptyAlignmentInfo())
   , m_lhsTarget(NULL)
@@ -110,8 +152,9 @@ TargetPhrase::TargetPhrase(const Phrase &phrase, const PhraseDictionary *pt)
 TargetPhrase::TargetPhrase(const TargetPhrase &copy)
   : Phrase(copy)
   , m_cached_scores(copy.m_cached_scores)
-  , m_fullScore(copy.m_fullScore)
+  , m_scope(copy.m_scope)
   , m_futureScore(copy.m_futureScore)
+  , m_estimatedScore(copy.m_estimatedScore)
   , m_scoreBreakdown(copy.m_scoreBreakdown)
   , m_alignTerm(copy.m_alignTerm)
   , m_alignNonTerm(copy.m_alignNonTerm)
@@ -148,6 +191,16 @@ void TargetPhrase::WriteToRulePB(hgmert::Rule* pb) const
 }
 #endif
 
+bool TargetPhrase::HasScope() const
+{
+  return !m_scope.expired(); // should actually never happen
+}
+
+SPTR<ContextScope> TargetPhrase::GetScope() const
+{
+  return m_scope.lock();
+}
+
 void TargetPhrase::EvaluateInIsolation(const Phrase &source)
 {
   const std::vector<FeatureFunction*> &ffs = FeatureFunction::GetFeatureFunctions();
@@ -158,17 +211,17 @@ void TargetPhrase::EvaluateInIsolation(const Phrase &source, const std::vector<F
 {
   if (ffs.size()) {
     const StaticData &staticData = StaticData::Instance();
-    ScoreComponentCollection futureScoreBreakdown;
+    ScoreComponentCollection estimatedScores;
     for (size_t i = 0; i < ffs.size(); ++i) {
       const FeatureFunction &ff = *ffs[i];
       if (! staticData.IsFeatureFunctionIgnored( ff )) {
-        ff.EvaluateInIsolation(source, *this, m_scoreBreakdown, futureScoreBreakdown);
+        ff.EvaluateInIsolation(source, *this, m_scoreBreakdown, estimatedScores);
       }
     }
 
     float weightedScore = m_scoreBreakdown.GetWeightedScore();
-    m_futureScore += futureScoreBreakdown.GetWeightedScore();
-    m_fullScore = weightedScore + m_futureScore;
+    m_estimatedScore += estimatedScores.GetWeightedScore();
+    m_futureScore = weightedScore + m_estimatedScore;
   }
 }
 
@@ -184,16 +237,16 @@ void TargetPhrase::EvaluateWithSourceContext(const InputType &input, const Input
     }
   }
   float weightedScore = m_scoreBreakdown.GetWeightedScore();
-  m_futureScore += futureScoreBreakdown.GetWeightedScore();
-  m_fullScore = weightedScore + m_futureScore;
+  m_estimatedScore += futureScoreBreakdown.GetWeightedScore();
+  m_futureScore = weightedScore + m_estimatedScore;
 }
 
 void TargetPhrase::UpdateScore(ScoreComponentCollection* futureScoreBreakdown)
 {
   float weightedScore = m_scoreBreakdown.GetWeightedScore();
   if(futureScoreBreakdown)
-    m_futureScore += futureScoreBreakdown->GetWeightedScore();
-  m_fullScore = weightedScore + m_futureScore;
+    m_estimatedScore += futureScoreBreakdown->GetWeightedScore();
+  m_futureScore = weightedScore + m_estimatedScore;
 }
 
 void TargetPhrase::SetXMLScore(float score)
@@ -248,42 +301,39 @@ void TargetPhrase::SetSparseScore(const FeatureFunction* translationScoreProduce
   m_scoreBreakdown.Assign(translationScoreProducer, sparseString.as_string());
 }
 
-boost::shared_ptr<Scores> 
-mergescores(boost::shared_ptr<Scores> const& a, 
-	    boost::shared_ptr<Scores> const& b)
+boost::shared_ptr<Scores>
+mergescores(boost::shared_ptr<Scores> const& a,
+            boost::shared_ptr<Scores> const& b)
 {
   boost::shared_ptr<Scores> ret;
   if (!a) return b ? b : ret;
   if (!b) return a;
   if (a->size() != b->size()) return ret;
   ret.reset(new Scores(*a));
-  for (size_t i = 0; i < a->size(); ++i)
-    {
-      if ((*a)[i] == 0) (*a)[i] = (*b)[i];
-      else if ((*b)[i])
-	{
-	  UTIL_THROW_IF2((*a)[i] != (*b)[i], "can't merge feature vectors");
-	}
+  for (size_t i = 0; i < a->size(); ++i) {
+    if ((*a)[i] == 0) (*a)[i] = (*b)[i];
+    else if ((*b)[i]) {
+      UTIL_THROW_IF2((*a)[i] != (*b)[i], "can't merge feature vectors");
     }
+  }
   return ret;
 }
 
-void 
+void
 TargetPhrase::
 Merge(const TargetPhrase &copy, const std::vector<FactorType>& factorVec)
 {
   Phrase::MergeFactors(copy, factorVec);
   m_scoreBreakdown.Merge(copy.GetScoreBreakdown());
+  m_estimatedScore += copy.m_estimatedScore;
   m_futureScore += copy.m_futureScore;
-  m_fullScore += copy.m_fullScore;
   typedef ScoreCache_t::iterator iter;
   typedef ScoreCache_t::value_type item;
-  BOOST_FOREACH(item const& s, copy.m_cached_scores)
-    {
-      pair<iter,bool> foo = m_cached_scores.insert(s);
-      if (foo.second == false) 
-	foo.first->second = mergescores(foo.first->second, s.second);
-    }
+  BOOST_FOREACH(item const& s, copy.m_cached_scores) {
+    pair<iter,bool> foo = m_cached_scores.insert(s);
+    if (foo.second == false)
+      foo.first->second = mergescores(foo.first->second, s.second);
+  }
 }
 
 TargetPhrase::ScoreCache_t const&
@@ -303,9 +353,11 @@ GetExtraScores(FeatureFunction const* ff) const
 
 void
 TargetPhrase::
-SetExtraScores(FeatureFunction const* ff, 
-	       boost::shared_ptr<Scores> const& s) 
-{ m_cached_scores[ff] = s; }
+SetExtraScores(FeatureFunction const* ff,
+               boost::shared_ptr<Scores> const& s)
+{
+  m_cached_scores[ff] = s;
+}
 
 
 void TargetPhrase::SetProperties(const StringPiece &str)
@@ -431,8 +483,8 @@ void TargetPhrase::BuildOptionTable(const taco::Lexicon<std::size_t> &lexicon,
 void swap(TargetPhrase &first, TargetPhrase &second)
 {
   first.SwapWords(second);
-  std::swap(first.m_fullScore, second.m_fullScore);
   std::swap(first.m_futureScore, second.m_futureScore);
+  std::swap(first.m_estimatedScore, second.m_estimatedScore);
   swap(first.m_scoreBreakdown, second.m_scoreBreakdown);
   std::swap(first.m_alignTerm, second.m_alignTerm);
   std::swap(first.m_alignNonTerm, second.m_alignNonTerm);
@@ -452,7 +504,7 @@ std::ostream& operator<<(std::ostream& os, const TargetPhrase& tp)
   os << tp.GetAlignNonTerm() << flush;
   os << ": term=" << tp.GetAlignTerm() << flush;
   os << ": nonterm=" << tp.GetAlignNonTerm() << flush;
-  os << ": c=" << tp.m_fullScore << flush;
+  os << ": c=" << tp.m_futureScore << flush;
   os << " " << tp.m_scoreBreakdown << flush;
 
   const Phrase *sourcePhrase = tp.GetRuleSource();

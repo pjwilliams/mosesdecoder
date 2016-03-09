@@ -19,10 +19,10 @@
  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  ***********************************************************************/
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <limits.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <climits>
 #include <sys/types.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -39,18 +39,20 @@
 #include "moses/Util.h"
 #include "moses/InputFileStream.h"
 #include "moses/StaticData.h"
-#include "moses/WordsRange.h"
+#include "moses/Range.h"
 #include "moses/TranslationModel/CYKPlusParser/ChartRuleLookupManagerMemoryPerSentence.h"
 #include "moses/TranslationModel/fuzzy-match/FuzzyMatchWrapper.h"
 #include "moses/TranslationModel/fuzzy-match/SentenceAlignment.h"
+#include "moses/TranslationTask.h"
 #include "util/file.hh"
 #include "util/exception.hh"
+#include "util/random.hh"
 
 using namespace std;
 
 #if defined __MINGW32__ && !defined mkdtemp
 #include <windows.h>
-#include <errno.h>
+#include <cerrno>
 char *mkdtemp(char *tempbuf)
 {
   int rand_value = 0;
@@ -62,8 +64,8 @@ char *mkdtemp(char *tempbuf)
     return NULL;
   }
 
-  srand((unsigned)time(0));
-  rand_value = (int)((rand() / ((double)RAND_MAX+1.0)) * 1e6);
+  util::rand_init();
+  rand_value = util::rand_excl(1e6);
   tempbase = strrchr(tempbuf, '/');
   tempbase = tempbase ? tempbase+1 : tempbuf;
   strcpy(tempbasebuf, tempbase);
@@ -79,7 +81,7 @@ namespace Moses
 {
 
 PhraseDictionaryFuzzyMatch::PhraseDictionaryFuzzyMatch(const std::string &line)
-  :PhraseDictionary(line)
+  :PhraseDictionary(line, true)
   ,m_config(3)
   ,m_FuzzyMatchWrapper(NULL)
 {
@@ -91,8 +93,9 @@ PhraseDictionaryFuzzyMatch::~PhraseDictionaryFuzzyMatch()
   delete m_FuzzyMatchWrapper;
 }
 
-void PhraseDictionaryFuzzyMatch::Load()
+void PhraseDictionaryFuzzyMatch::Load(AllOptions::ptr const& opts)
 {
+  m_options = opts;
   SetFeaturesToApply();
 
   m_FuzzyMatchWrapper = new tmmt::FuzzyMatchWrapper(m_config[0], m_config[1], m_config[2]);
@@ -130,10 +133,6 @@ int removedirectoryrecursively(const char *dirname)
   struct dirent *entry;
   char path[PATH_MAX];
 
-  if (path == NULL) {
-    fprintf(stderr, "Out of memory error\n");
-    return 0;
-  }
   dir = opendir(dirname);
   if (dir == NULL) {
     perror("Error opendir()");
@@ -175,8 +174,9 @@ int removedirectoryrecursively(const char *dirname)
   return 1;
 }
 
-void PhraseDictionaryFuzzyMatch::InitializeForInput(InputType const& inputSentence)
+void PhraseDictionaryFuzzyMatch::InitializeForInput(ttasksptr const& ttask)
 {
+  InputType const& inputSentence = *ttask->GetSource();
 #if defined __MINGW32__
   char dirName[] = "moses.XXXXXX";
 #else
@@ -242,7 +242,7 @@ void PhraseDictionaryFuzzyMatch::InitializeForInput(InputType const& inputSenten
                                                , &alignString        = tokens[3];
 
     bool isLHSEmpty = (sourcePhraseString.find_first_not_of(" \t", 0) == string::npos);
-    if (isLHSEmpty && !staticData.IsWordDeletionEnabled()) {
+    if (isLHSEmpty && !ttask->options()->unk.word_deletion_enabled) {
       TRACE_ERR( ptFileName << ":" << count << ": pt entry contains empty target, skipping\n");
       continue;
     }
@@ -283,8 +283,10 @@ void PhraseDictionaryFuzzyMatch::InitializeForInput(InputType const& inputSenten
     targetPhrase->GetScoreBreakdown().Assign(this, scoreVector);
     targetPhrase->EvaluateInIsolation(sourcePhrase, GetFeaturesToApply());
 
-    TargetPhraseCollection &phraseColl = GetOrCreateTargetPhraseCollection(rootNode, sourcePhrase, *targetPhrase, sourceLHS);
-    phraseColl.Add(targetPhrase);
+    TargetPhraseCollection::shared_ptr phraseColl
+    = GetOrCreateTargetPhraseCollection(rootNode, sourcePhrase,
+                                        *targetPhrase, sourceLHS);
+    phraseColl->Add(targetPhrase);
 
     count++;
 
@@ -302,10 +304,12 @@ void PhraseDictionaryFuzzyMatch::InitializeForInput(InputType const& inputSenten
   //removedirectoryrecursively(dirName);
 }
 
-TargetPhraseCollection &PhraseDictionaryFuzzyMatch::GetOrCreateTargetPhraseCollection(PhraseDictionaryNodeMemory &rootNode
-    , const Phrase &source
-    , const TargetPhrase &target
-    , const Word *sourceLHS)
+TargetPhraseCollection::shared_ptr
+PhraseDictionaryFuzzyMatch::
+GetOrCreateTargetPhraseCollection(PhraseDictionaryNodeMemory &rootNode
+                                  , const Phrase &source
+                                  , const TargetPhrase &target
+                                  , const Word *sourceLHS)
 {
   PhraseDictionaryNodeMemory &currNode = GetOrCreateNode(rootNode, source, target, sourceLHS);
   return currNode.GetTargetPhraseCollection();
@@ -392,10 +396,10 @@ TO_STRING_BODY(PhraseDictionaryFuzzyMatch);
 // friend
 ostream& operator<<(ostream& out, const PhraseDictionaryFuzzyMatch& phraseDict)
 {
+  /*
   typedef PhraseDictionaryNodeMemory::TerminalMap TermMap;
   typedef PhraseDictionaryNodeMemory::NonTerminalMap NonTermMap;
 
-  /*
   const PhraseDictionaryNodeMemory &coll = phraseDict.m_collection;
   for (NonTermMap::const_iterator p = coll.m_nonTermMap.begin(); p != coll.m_nonTermMap.end(); ++p) {
     const Word &sourceNonTerm = p->first.first;

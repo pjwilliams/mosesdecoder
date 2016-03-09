@@ -16,7 +16,8 @@ namespace CM
 class ModelState : public FFState
 {
  public:
-  virtual int Compare(const FFState &) const;
+  virtual size_t hash() const;
+  virtual bool operator==(const FFState& other) const;
   std::vector<taco::FeatureStructureSet> sets;
 };
 

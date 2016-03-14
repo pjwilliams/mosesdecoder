@@ -63,7 +63,7 @@ class ConstraintModel : public StatefulFeatureFunction
       const TranslationOptionList &) const {}
 
   // Override FeatureFunction function.
-  void Load();
+  void Load(const AllOptions::ptr &opts);
 
   // Override FeatureFunction function.
   void SetParameter(const std::string &, const std::string &);

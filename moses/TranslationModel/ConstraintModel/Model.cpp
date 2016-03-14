@@ -45,8 +45,10 @@ ConstraintModel::ConstraintModel(const std::string &line)
   }
 }
 
-void ConstraintModel::Load()
+void ConstraintModel::Load(const AllOptions::ptr &opts)
 {
+  m_options = opts;
+
   // Load constraint tables.
   for (std::size_t i = 0; i < m_parameters.m_tableFiles.size(); ++i) {
     PrintUserTime(std::string("Start loading constraint table ") +

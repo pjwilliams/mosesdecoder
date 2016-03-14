@@ -11,12 +11,12 @@
 namespace taco
 {
 
-std::size_t hash_value(const FeatureStructure &x) {
+inline std::size_t hash_value(const FeatureStructure &x) {
   taco::FeatureStructureHasher hasher;
   return hasher(x);
 };
 
-std::size_t hash_value(const FeatureStructureSet &s) {
+inline std::size_t hash_value(const FeatureStructureSet &s) {
   std::size_t seed = 0;
   for (FeatureStructureSet::const_iterator p = s.begin(); p != s.end(); ++p) {
     boost::hash_combine(seed, **p);
@@ -39,6 +39,8 @@ class FeatureStructureSetEqualityPred
       if (!fsPred(**p, **q)) {
         return false;
       }
+      ++p;
+      ++q;
     }
     return true;
   };
@@ -70,6 +72,8 @@ class ModelState : public FFState
       if (!fsSetPred(*p, *q)) {
         return false;
       }
+      ++p;
+      ++q;
     }
     return true;
   };

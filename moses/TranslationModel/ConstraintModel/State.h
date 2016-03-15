@@ -2,51 +2,13 @@
 #ifndef moses_ConstraintModelState_h
 #define moses_ConstraintModelState_h
 
+#include "FeatureStructureSet.h"
+
 #include "moses/FF/FFState.h"
 
-#include <taco/feature_structure_set.h>
+#include "taco/base/hash_combine.h"
 
 #include <vector>
-
-namespace taco
-{
-
-inline std::size_t hash_value(const FeatureStructure &x) {
-  taco::FeatureStructureHasher hasher;
-  return hasher(x);
-};
-
-inline std::size_t hash_value(const FeatureStructureSet &s) {
-  std::size_t seed = 0;
-  for (FeatureStructureSet::const_iterator p = s.begin(); p != s.end(); ++p) {
-    boost::hash_combine(seed, **p);
-  }
-  return seed;
-}
-
-class FeatureStructureSetEqualityPred
-{
- public:
-  bool operator()(const FeatureStructureSet &x,
-                  const FeatureStructureSet &y) const {
-    if (x.size() != y.size()) {
-      return false;
-    }
-    FeatureStructureEqualityPred fsPred;
-    FeatureStructureSet::const_iterator p = x.begin();
-    FeatureStructureSet::const_iterator q = y.begin();
-    while (p != x.end()) {
-      if (!fsPred(**p, **q)) {
-        return false;
-      }
-      ++p;
-      ++q;
-    }
-    return true;
-  };
-};
-
-}
 
 namespace Moses
 {
@@ -57,7 +19,13 @@ class ModelState : public FFState
 {
  public:
   virtual std::size_t hash() const {
-    return boost::hash_range(sets.begin(), sets.end());
+    FeatureStructureSetHash setHash;
+    std::size_t seed = 0;
+    for (std::vector<FeatureStructureSet>::const_iterator p = sets.begin();
+         p != sets.end(); ++p) {
+      taco::hash_combine(seed, setHash(*p));
+    }
+    return seed;
   };
 
   virtual bool operator==(const FFState& other) const {
@@ -65,20 +33,18 @@ class ModelState : public FFState
     if (sets.size() != cms.sets.size()) {
       return false;
     }
-    taco::FeatureStructureSetEqualityPred fsSetPred;
-    std::vector<taco::FeatureStructureSet>::const_iterator p = sets.begin();
-    std::vector<taco::FeatureStructureSet>::const_iterator q = cms.sets.begin();
+    FeatureStructureSetEqual fsSetEqual;
+    std::vector<FeatureStructureSet>::const_iterator p = sets.begin();
+    std::vector<FeatureStructureSet>::const_iterator q = cms.sets.begin();
     while (p != sets.end()) {
-      if (!fsSetPred(*p, *q)) {
+      if (!fsSetEqual(*p++, *q++)) {
         return false;
       }
-      ++p;
-      ++q;
     }
     return true;
   };
 
-  std::vector<taco::FeatureStructureSet> sets;
+  std::vector<FeatureStructureSet> sets;
 };
 
 }  // namespace CM

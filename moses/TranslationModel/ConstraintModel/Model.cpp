@@ -149,7 +149,7 @@ ModelState *ConstraintModel::EmptyModelState() const {
   return state;
 }
 
-const taco::FeatureStructureSet *
+const FeatureStructureSet *
 ConstraintModel::ProcessRootInterpretations(
     const std::vector<taco::Interpretation> &interpretations,
     const taco::FeatureSelectionRule &featureSelectionRule) const

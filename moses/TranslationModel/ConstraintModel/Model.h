@@ -13,7 +13,6 @@
 #include <taco/constraint_set.h>
 #include <taco/feature_selection_table.h>
 #include <taco/feature_structure.h>
-#include <taco/feature_structure_set.h>
 #include <taco/interpretation.h>
 #include <taco/lexicon.h>
 #include <taco/text-formats/feature_structure_writer.h>
@@ -115,7 +114,7 @@ class ConstraintModel : public StatefulFeatureFunction
 
   bool HardConstraint() const { return m_parameters.m_hardConstraint; }
 
-  const taco::FeatureStructureSet *ProcessRootInterpretations(
+  const FeatureStructureSet *ProcessRootInterpretations(
       const std::vector<taco::Interpretation> &,
       const taco::FeatureSelectionRule &) const;
 

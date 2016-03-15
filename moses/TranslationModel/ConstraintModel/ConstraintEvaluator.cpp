@@ -77,7 +77,7 @@ std::auto_ptr<const ModelState> ConstraintEvaluator::Eval(
 
     if (constraintSet.ContainsRoot()) {
       assert(featureSelectionRule);
-      const taco::FeatureStructureSet *set =
+      const FeatureStructureSet *set =
           m_model.ProcessRootInterpretations(*finalInterpretations,
                                             *featureSelectionRule);
       if (set) {

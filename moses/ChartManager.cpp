@@ -54,12 +54,7 @@ ChartManager::ChartManager(ttasksptr const& ttask)
   , m_hypothesisId(0)
   , m_parser(ttask, m_hypoStackColl)
   , m_translationOptionList(ttask->options()->syntax.rule_limit, m_source)
-{
-  const CM::ConstraintModel *cm = StaticData::Instance().GetConstraintModel();
-  if (cm) {
-    m_constraintEvaluator.reset(new CM::ConstraintEvaluator(*cm));
-  }
-}
+{ }
 
 ChartManager::~ChartManager()
 {

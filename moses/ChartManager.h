@@ -29,7 +29,6 @@
 #include "SentenceStats.h"
 #include "ChartTranslationOptionList.h"
 #include "ChartParser.h"
-#include "moses/TranslationModel/ConstraintModel/ConstraintEvaluator.h"
 #include "ChartKBestExtractor.h"
 #include "BaseManager.h"
 #include "moses/Syntax/KBestExtractor.h"
@@ -49,7 +48,6 @@ private:
   std::auto_ptr<SentenceStats> m_sentenceStats;
   clock_t m_start; /**< starting time, used for logging */
   unsigned m_hypothesisId; /* For handing out hypothesis ids to ChartHypothesis */
-  boost::shared_ptr<CM::ConstraintEvaluator> m_constraintEvaluator;
 
   ChartParser m_parser;
 
@@ -126,14 +124,6 @@ public:
     return m_hypoStackColl;
   }
 
-  const CM::ConstraintEvaluator &GetConstraintEvaluator() const {
-    return *m_constraintEvaluator;
-  }
-
-  /***
-   * to be called after processing a sentence (which may consist of more than just calling ProcessSentence() )
-   * currently an empty function
-   */
   void CalcDecoderStatistics() const {
   }
 

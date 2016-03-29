@@ -126,7 +126,6 @@ public:
   // leftRightMost: 1=left, 2=right
   void GetOutputPhrase(size_t leftRightMost, size_t numWords, Phrase &outPhrase) const;
 
-  void Evaluate();
   bool EvaluateHC(const CM::ConstraintModel &);
   void EvaluateWhenApplied();
 

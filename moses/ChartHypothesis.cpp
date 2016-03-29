@@ -215,7 +215,6 @@ bool ChartHypothesis::EvaluateHC(const CM::ConstraintModel &cm)
 {
   // Assumes EvaluateWhenApplied() has already been called.
   int i = cm.GetFeatureId();
-  const CM::ConstraintEvaluator &evaluator = m_manager.GetConstraintEvaluator();
   bool failure;
   m_totalScore -= m_currScoreBreakdown.GetWeightedScore();
   m_ffStates[i] = cm.EvaluateInternal(*this, failure, &m_currScoreBreakdown);

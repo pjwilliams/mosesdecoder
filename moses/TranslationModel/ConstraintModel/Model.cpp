@@ -128,8 +128,7 @@ FFState *ConstraintModel::EvaluateInternal(
   bool &failure,
   ScoreComponentCollection *scoreComponentCollection) const
 {
-  const ConstraintEvaluator &evaluator =
-    hypo.GetManager().GetConstraintEvaluator();
+  ConstraintEvaluator evaluator(*this);
   std::vector<float> numEvaluationFailures(GetNumScoreComponents());
   std::auto_ptr<const ModelState> state = evaluator.Eval(hypo, failure,
                                                          &numEvaluationFailures);

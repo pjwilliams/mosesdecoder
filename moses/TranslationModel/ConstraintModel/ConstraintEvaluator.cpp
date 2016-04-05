@@ -1,11 +1,11 @@
 #include "ConstraintEvaluator.h"
 
-#include "FailureTable.h"
 #include "Model.h"
 #include "State.h"
 
 #include "moses/ChartHypothesis.h"
 #include "moses/StaticData.h"
+#include "moses/Syntax/SVertex.h"
 
 #include <taco/constraint_evaluator.h>
 #include <taco/option_table.h>
@@ -31,7 +31,7 @@ std::auto_ptr<const ModelState> ConstraintEvaluator::Eval(
   const CSParamPairVec *constraintSets = targetPhrase.GetConstraintSets();
 
   if (!constraintSets) {
-    return std::auto_ptr<const CM::ModelState>(m_model.EmptyModelState());
+    return std::auto_ptr<const ModelState>(m_model.EmptyModelState());
   }
 
   const taco::FeatureSelectionRule *featureSelectionRule =
@@ -44,7 +44,7 @@ std::auto_ptr<const ModelState> ConstraintEvaluator::Eval(
 
   ConstraintSetApplication csa;
 
-  std::auto_ptr<CM::ModelState> state;
+  std::auto_ptr<ModelState> state;
 
   std::vector<std::vector<taco::Interpretation> >::const_iterator p =
     partialInterpretationVec.begin();
@@ -63,7 +63,7 @@ std::auto_ptr<const ModelState> ConstraintEvaluator::Eval(
     if (failure) {
       if (m_model.HardConstraint()) {
         // Exit early -- there's no point evaluating the remaining constraints.
-        return std::auto_ptr<const CM::ModelState>(m_model.EmptyModelState());
+        return std::auto_ptr<const ModelState>(m_model.EmptyModelState());
       }
       if (failureCounts) {
         int id = params.csTypeIndex;
@@ -91,21 +91,98 @@ std::auto_ptr<const ModelState> ConstraintEvaluator::Eval(
   }
 
   if (state.get()) {
-    return std::auto_ptr<const CM::ModelState>(state);
+    return std::auto_ptr<const ModelState>(state);
   } else {
-    return std::auto_ptr<const CM::ModelState>(m_model.EmptyModelState());
+    return std::auto_ptr<const ModelState>(m_model.EmptyModelState());
   }
 }
 
-void ConstraintEvaluator::BuildOptionTable(const TargetPhrase &targetPhrase,
-                                           const ConstraintSetApplication &csa,
-                                           int csTypeIndex,
-                                           taco::OptionTable &optionTable) const
+std::auto_ptr<const ModelState> ConstraintEvaluator::Eval(
+    const Syntax::SHyperedge &hyperedge,
+    bool &failure,
+    std::vector<float> *failureCounts) const {
+  typedef std::vector<const CSParamPair *> CSParamPairVec;
+
+  failure = false;
+
+  const TargetPhrase &targetPhrase = *hyperedge.label.translation;
+  const CSParamPairVec *constraintSets = targetPhrase.GetConstraintSets();
+
+  if (!constraintSets) {
+    return std::auto_ptr<const ModelState>(m_model.EmptyModelState());
+  }
+
+  const taco::FeatureSelectionRule *featureSelectionRule =
+    targetPhrase.GetFeatureSelectionRule();
+
+  const std::vector<std::vector<taco::Interpretation> > &
+    partialInterpretationVec = targetPhrase.GetPartialInterpretations(m_model);
+
+  assert(partialInterpretationVec.size() == constraintSets->size());
+
+  ConstraintSetApplication csa;
+
+  std::auto_ptr<ModelState> state;
+
+  std::vector<std::vector<taco::Interpretation> >::const_iterator p =
+    partialInterpretationVec.begin();
+  CSParamPairVec::const_iterator q = constraintSets->begin();
+  for (; p != partialInterpretationVec.end(); ++p, ++q) {
+    const std::vector<taco::Interpretation> &partialInterpretations = *p;
+    const taco::ConstraintSet &constraintSet = (*q)->first;
+    const CM::SubmodelParams &params = (*q)->second;
+
+    ConstructCSA(constraintSet, hyperedge, csa);
+
+    const std::vector<taco::Interpretation> *finalInterpretations;
+
+    failure = !EvalCS(targetPhrase, csa, params.csTypeIndex,
+                      partialInterpretations, finalInterpretations);
+    if (failure) {
+      if (m_model.HardConstraint()) {
+        // Exit early -- there's no point evaluating the remaining constraints.
+        return std::auto_ptr<const ModelState>(m_model.EmptyModelState());
+      }
+      if (failureCounts) {
+        int id = params.csTypeIndex;
+        if (id != -1) {
+          assert(id >= 0);
+          ++(*failureCounts)[id];
+        }
+      }
+      continue;
+    }
+
+    if (constraintSet.ContainsRoot()) {
+      assert(featureSelectionRule);
+      const FeatureStructureSet *set =
+          m_model.ProcessRootInterpretations(*finalInterpretations,
+                                            *featureSelectionRule);
+      if (set) {
+        if (!state.get()) {
+          state.reset(m_model.EmptyModelState());
+        }
+        state->sets[params.csTypeIndex] = *set;
+        delete set;
+      }
+    }
+  }
+
+  if (state.get()) {
+    return std::auto_ptr<const ModelState>(state);
+  } else {
+    return std::auto_ptr<const ModelState>(m_model.EmptyModelState());
+  }
+}
+
+void ConstraintEvaluator::BuildOptionTable(
+    const TargetPhrase &targetPhrase, const ConstraintSetApplication &csa,
+    int csTypeIndex, taco::OptionTable &optionTable) const
 {
   std::set<int> indices;
   csa.m_cs->GetIndices(indices);
 
-  std::vector<const ChartHypothesis *>::const_iterator q = csa.m_hypos.begin();
+  std::vector<const ModelState *>::const_iterator q = csa.m_predStates.begin();
   for (std::set<int>::const_iterator p = indices.begin();
        p != indices.end(); ++p) {
     if (*p == 0) {
@@ -118,23 +195,21 @@ void ConstraintEvaluator::BuildOptionTable(const TargetPhrase &targetPhrase,
     if (!word.IsNonTerminal()) {
       continue;
     }
-    const ChartHypothesis *prevHypo = *q++;
-    const FFState *base = prevHypo->GetFFState(m_model.GetFeatureId());
-    const CM::ModelState *prevState = dynamic_cast<const CM::ModelState*>(base);
-    assert(prevState);
-    assert(!prevState->sets[csTypeIndex].empty());
-    optionTable.AddColumn(*p, prevState->sets[csTypeIndex].begin(),
-                          prevState->sets[csTypeIndex].end());
+    const ModelState *predState = *q++;
+    assert(predState);
+    assert(!predState->sets[csTypeIndex].empty());
+    optionTable.AddColumn(*p, predState->sets[csTypeIndex].begin(),
+                          predState->sets[csTypeIndex].end());
   }
 }
 
-void ConstraintEvaluator::ConstructCSA(const taco::ConstraintSet &cs,
-                                       const ChartHypothesis &hypo,
-                                       ConstraintSetApplication &csa) const
+void ConstraintEvaluator::ConstructCSA(
+    const taco::ConstraintSet &cs, const ChartHypothesis &hypo,
+    ConstraintSetApplication &csa) const
 {
   csa.m_cs = &cs;
   csa.m_words.clear();
-  csa.m_hypos.clear();
+  csa.m_predStates.clear();
 
   const TargetPhrase &targetPhrase = hypo.GetCurrTargetPhrase();
   const std::vector<const ChartHypothesis*> &prevHypos = hypo.GetPrevHypos();
@@ -157,7 +232,49 @@ void ConstraintEvaluator::ConstructCSA(const taco::ConstraintSet &cs,
     if (word.IsNonTerminal()) {
       std::size_t nonTermInd = nonTermIndexMap[rhsIndex];
       const ChartHypothesis *prevHypo = prevHypos[nonTermInd];
-      csa.m_hypos.push_back(prevHypo);
+      const FFState *base = prevHypo->GetFFState(m_model.GetFeatureId());
+      const ModelState *predState = dynamic_cast<const ModelState*>(base);
+      assert(predState);
+      csa.m_predStates.push_back(predState);
+    } else {
+      const Factor *f = word.GetFactor(0);
+      assert(f);
+      csa.m_words.push_back(f);
+    }
+  }
+}
+
+void ConstraintEvaluator::ConstructCSA(
+    const taco::ConstraintSet &cs, const Syntax::SHyperedge &hyperedge,
+    ConstraintSetApplication &csa) const
+{
+  csa.m_cs = &cs;
+  csa.m_words.clear();
+  csa.m_predStates.clear();
+
+  const TargetPhrase &targetPhrase = *hyperedge.label.translation;
+  const AlignmentInfo::NonTermIndexMap &nonTermIndexMap =
+    targetPhrase.GetAlignNonTerm().GetNonTermIndexMap2();
+
+  std::set<int> indices;
+  cs.GetIndices(indices);
+
+  for (std::set<int>::const_iterator p = indices.begin();
+       p != indices.end(); ++p) {
+    if (*p == 0) {
+      continue;
+    }
+    int rhsIndex = *p - 1;
+    assert(rhsIndex >= 0);
+    assert(rhsIndex < targetPhrase.GetSize());
+    const Word &word = targetPhrase.GetWord(rhsIndex);
+    if (word.IsNonTerminal()) {
+      std::size_t nonTermInd = nonTermIndexMap[rhsIndex];
+      const Syntax::SVertex *pred = hyperedge.tail[nonTermInd];
+      const FFState *base = pred->states[m_model.GetFeatureId()];
+      const ModelState *predState = dynamic_cast<const ModelState*>(base);
+      assert(predState);
+      csa.m_predStates.push_back(predState);
     } else {
       const Factor *f = word.GetFactor(0);
       assert(f);
@@ -172,10 +289,6 @@ bool ConstraintEvaluator::EvalCS(
     int csTypeIndex,
     const std::vector<taco::Interpretation> &partialInterpretations,
     const std::vector<taco::Interpretation> *&finalInterpretations) const {
-
-  if (m_failureTable.Contains(csa)) {
-    return false;
-  }
 
   m_resources.Clear();
 
@@ -192,13 +305,7 @@ bool ConstraintEvaluator::EvalCS(
     finalInterpretations = &m_resources.interpretations;
   }
 
-  bool failure = finalInterpretations->empty();
-
-  if (failure) {
-    m_failureTable.Add(csa);
-  }
-
-  return !failure;
+  return !finalInterpretations->empty();
 }
 
 }  // namespace CM

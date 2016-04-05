@@ -217,7 +217,7 @@ bool ChartHypothesis::EvaluateHC(const CM::ConstraintModel &cm)
   int i = cm.GetFeatureId();
   bool failure;
   m_totalScore -= m_currScoreBreakdown.GetWeightedScore();
-  m_ffStates[i] = cm.EvaluateInternal(*this, failure, &m_currScoreBreakdown);
+  m_ffStates[i] = cm.Evaluate(*this, failure, &m_currScoreBreakdown);
   m_totalScore += m_currScoreBreakdown.GetWeightedScore();
   return !failure;
 }

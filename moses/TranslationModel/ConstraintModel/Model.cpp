@@ -116,24 +116,47 @@ FFState *ConstraintModel::EvaluateWhenApplied(
     return 0;
   }
   bool failure;
-  return EvaluateInternal(hypo, failure, accumulator);
+  return Evaluate(hypo, failure, accumulator);
+}
+
+FFState *ConstraintModel::EvaluateWhenApplied(
+    const Syntax::SHyperedge &hyperedge, int featureID,
+    ScoreComponentCollection *accumulator) const
+{
+  if (HardConstraint()) {
+    return 0;
+  }
+  bool failure;
+  return Evaluate(hyperedge, failure, accumulator);
 }
 
 const FFState *ConstraintModel::EmptyHypothesisState(const InputType &) const {
   return EmptyModelState();
 }
 
-FFState *ConstraintModel::EvaluateInternal(
-  const ChartHypothesis &hypo,
-  bool &failure,
-  ScoreComponentCollection *scoreComponentCollection) const
+FFState *ConstraintModel::Evaluate(const ChartHypothesis &hypo,
+                                   bool &failure,
+                                   ScoreComponentCollection *deltas) const
 {
   ConstraintEvaluator evaluator(*this);
   std::vector<float> numEvaluationFailures(GetNumScoreComponents());
   std::auto_ptr<const ModelState> state = evaluator.Eval(hypo, failure,
                                                          &numEvaluationFailures);
   std::auto_ptr<ModelState> state2(const_cast<ModelState *>(state.release()));
-  scoreComponentCollection->PlusEquals(this, numEvaluationFailures);
+  deltas->PlusEquals(this, numEvaluationFailures);
+  return state2.release();
+}
+
+FFState *ConstraintModel::Evaluate(const Syntax::SHyperedge &hyperedge,
+                                   bool &failure,
+                                   ScoreComponentCollection *deltas) const
+{
+  ConstraintEvaluator evaluator(*this);
+  std::vector<float> numEvaluationFailures(GetNumScoreComponents());
+  std::auto_ptr<const ModelState> state = evaluator.Eval(hyperedge, failure,
+                                                         &numEvaluationFailures);
+  std::auto_ptr<ModelState> state2(const_cast<ModelState *>(state.release()));
+  deltas->PlusEquals(this, numEvaluationFailures);
   return state2.release();
 }
 

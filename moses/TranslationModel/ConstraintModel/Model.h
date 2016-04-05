@@ -8,6 +8,7 @@
 
 #include "moses/FactorCollection.h"
 #include "moses/FF/StatefulFeatureFunction.h"
+#include "moses/Syntax/SHyperedge.h"
 
 #include <taco/base/vocabulary.h>
 #include <taco/constraint_set.h>
@@ -43,26 +44,10 @@ class ConstraintModel : public StatefulFeatureFunction
   ConstraintModel(const std::string &);
 
   // Override FeatureFunction function.
-  bool IsUseable(const FactorMask &) const { return true; }
-
-  // Override FeatureFunction function.
-  void EvaluateInIsolation(const Phrase &, const TargetPhrase &,
-                           ScoreComponentCollection &,
-                           ScoreComponentCollection &) const {}
-
-  // Override FeatureFunction function.
-  void EvaluateWithSourceContext(const InputType &, const InputPath &,
-                                 const TargetPhrase &, const StackVec *,
-                                 ScoreComponentCollection &,
-                                 ScoreComponentCollection *) const {}
-
-  // Override FeatureFunction function.
-  void EvaluateTranslationOptionListWithSourceContext(
-      const InputType &,
-      const TranslationOptionList &) const {}
-
-  // Override FeatureFunction function.
   void Load(const AllOptions::ptr &opts);
+
+  // Override FeatureFunction function.
+  bool IsUseable(const FactorMask &) const { return true; }
 
   // Override FeatureFunction function.
   void SetParameter(const std::string &, const std::string &);
@@ -76,23 +61,21 @@ class ConstraintModel : public StatefulFeatureFunction
                                ScoreComponentCollection *) const;
 
   // Override StatefulFeatureFunction function.
+  FFState *EvaluateWhenApplied(const Syntax::SHyperedge &, int,
+                               ScoreComponentCollection *) const;
+
+  // Override StatefulFeatureFunction function.
   const FFState *EmptyHypothesisState(const InputType &) const;
 
   // Return index of object in StatefulFeatureFunction::m_statefulFFs vector.
   int GetFeatureId() const { return m_featureId; }
   void SetFeatureId(int i) { m_featureId = i; }
 
-  //std::string GetScoreProducerWeightShortName(unsigned) const { return "cm"; }
+  FFState *Evaluate(const ChartHypothesis &, bool &,
+                    ScoreComponentCollection *) const;
 
-  FFState *EvaluateInternal(const ChartHypothesis &,
-                            bool &,
-                            ScoreComponentCollection *) const;
-
-  taco::Vocabulary &GetFeatureSet() { return m_featureSet; }
-  const taco::Vocabulary &GetFeatureSet() const { return m_featureSet; }
-
-  taco::Vocabulary &GetValueSet() { return m_valueSet; }
-  const taco::Vocabulary &GetValueSet() const { return m_valueSet; }
+  FFState *Evaluate(const Syntax::SHyperedge &, bool &,
+                    ScoreComponentCollection *) const;
 
   const std::vector<ConstraintTable> &GetConstraintTables() const {
     return m_constraintTables;
@@ -108,10 +91,6 @@ class ConstraintModel : public StatefulFeatureFunction
 
   ModelState *EmptyModelState() const;
 
-  void LoadLexicon(int, std::istream &);
-  void LoadConstraintTable(int, std::istream &);
-  void LoadFeatureSelectionTable(std::istream &);
-
   bool HardConstraint() const { return m_parameters.m_hardConstraint; }
 
   const FeatureStructureSet *ProcessRootInterpretations(
@@ -126,6 +105,10 @@ class ConstraintModel : public StatefulFeatureFunction
     std::vector<std::string> m_lexiconFiles;
     std::vector<std::string> m_tableFiles;
   };
+
+  void LoadLexicon(int, std::istream &);
+  void LoadConstraintTable(int, std::istream &);
+  void LoadFeatureSelectionTable(std::istream &);
 
   Parameters m_parameters;
   std::vector<int> m_scoreIndices;

@@ -165,6 +165,10 @@ void Manager<Parser>::Decode()
   const std::size_t ruleLimit = options()->syntax.rule_limit;
   const std::size_t stackLimit = options()->search.stack_size;
 
+  // Check if constraint model is required.
+  const CM::ConstraintModel *cm = StaticData::Instance().GetConstraintModel();
+  bool hardConstraint = cm ? cm->HardConstraint() : false;
+
   // Initialise the PChart and SChart.
   InitializeCharts();
 
@@ -207,6 +211,10 @@ void Manager<Parser>::Decode()
       BufferMap buffers;
       while (count < popLimit && !cubeQueue.IsEmpty()) {
         SHyperedge *hyperedge = cubeQueue.Pop();
+        if (hardConstraint && !EvaluateHC(*cm, *hyperedge)) {
+          delete hyperedge;  // TODO Check ownership.
+          continue;
+        }
         // BEGIN{HACK}
         // The way things currently work, the LHS of each hyperedge is not
         // determined until just before the point of its creation, when a
@@ -401,6 +409,19 @@ void Manager<Parser>::OutputDetailedTranslationReport(
   std::ostringstream out;
   DerivationWriter::Write(*best, translationId, out);
   collector->Write(translationId, out.str());
+}
+
+template<typename Parser>
+bool Manager<Parser>::EvaluateHC(const CM::ConstraintModel &cm,
+                                 SHyperedge &hyperedge)
+{
+  int i = cm.GetFeatureId();
+  bool failure;
+  hyperedge.label.futureScore -= hyperedge.label.deltas.GetWeightedScore();
+  hyperedge.head->states[i] =
+      cm.Evaluate(hyperedge, failure, &hyperedge.label.deltas);
+  hyperedge.label.futureScore += hyperedge.label.deltas.GetWeightedScore();
+  return !failure;
 }
 
 }  // S2T

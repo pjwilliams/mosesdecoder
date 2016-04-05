@@ -2,6 +2,8 @@
 #ifndef moses_ConstraintModelConstraintSetApplication_h
 #define moses_ConstraintModelConstraintSetApplication_h
 
+#include "State.h"
+
 #include <taco/constraint_set.h>
 
 #include <boost/functional/hash.hpp>
@@ -11,14 +13,13 @@
 namespace Moses {
 
 class Factor;
-class ChartHypothesis;
 
 namespace CM {
 
 struct ConstraintSetApplication {
   const taco::ConstraintSet *m_cs;
   std::vector<const Factor *> m_words;
-  std::vector<const ChartHypothesis *> m_hypos;
+  std::vector<const ModelState *> m_predStates;
 };
 
 struct ConstraintSetApplicationHasher {
@@ -27,7 +28,7 @@ struct ConstraintSetApplicationHasher {
     std::size_t seed = 0;
     boost::hash_combine(seed, csa.m_cs);
     boost::hash_combine(seed, csa.m_words);
-    boost::hash_combine(seed, csa.m_hypos);
+    boost::hash_combine(seed, csa.m_predStates);
     return seed;
   }
 };
@@ -38,7 +39,7 @@ struct ConstraintSetApplicationEqualityPred {
                   const ConstraintSetApplication &b) const {
     return a.m_cs == b.m_cs &&
            a.m_words == b.m_words &&
-           a.m_hypos == b.m_hypos;
+           a.m_predStates == b.m_predStates;
   }
 };
 

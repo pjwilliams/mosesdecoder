@@ -45,6 +45,8 @@ public:
   void OutputDetailedTranslationReport(OutputCollector *collector) const;
 
 private:
+  bool EvaluateHC(const CM::ConstraintModel &, SHyperedge &);
+
   void FindOovs(const PChart &, boost::unordered_set<Word> &, std::size_t);
 
   void InitializeCharts();
